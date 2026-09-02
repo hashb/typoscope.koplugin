@@ -1,72 +1,3 @@
-local Blitbuffer = require("ffi/blitbuffer")
-local DataStorage = require("datastorage")
-local Dispatcher = require("dispatcher")
-local LuaSettings = require("luasettings")
-local Screen = require("device").screen
-local UIManager = require("ui/uimanager")
-local Widget = require("ui/widget/widget")
-local _ = require("gettext")
-
-local Geometry = require("geometry")
-
-local Typoscope = Widget:extend{
-    name = "typoscope",
-    is_doc_only = true,
-    is_enabled = false,
-    leave_image_pages_unmasked = false,
-    line_index = 1,
-    line_padding = 3,
-    manual_height = 42,
-    manual_center = 0.35,
-    lines = nil,
-}
-
-function Typoscope:init()
-    self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/typoscope.lua")
-    self.is_enabled = self.settings:isTrue("enabled")
-    self.leave_image_pages_unmasked = self.settings:isTrue("leave_image_pages_unmasked")
-    self.line_padding = self.settings:readSetting("line_padding") or self.line_padding
-    self.manual_height = self.settings:readSetting("manual_height") or self.manual_height
-    self.manual_center = self.settings:readSetting("manual_center") or self.manual_center
-    self:registerActions()
-end
-
-function Typoscope.registerActions()
-    Dispatcher:registerAction("typoscope_toggle", {
-        category = "none", event = "TyposcopeToggle", title = _("Toggle typoscope"), reader = true,
-    })
-    Dispatcher:registerAction("typoscope_next_line", {
-        category = "none", event = "TyposcopeNextLine", title = _("Typoscope: next line"), reader = true,
-    })
-    Dispatcher:registerAction("typoscope_previous_line", {
-        category = "none", event = "TyposcopePreviousLine", title = _("Typoscope: previous line"), reader = true,
-    })
-end
-
-function Typoscope:onReaderReady()
-    self.ui.menu:registerToMainMenu(self)
-    self.view:registerViewModule("typoscope", self)
-    self:refreshLines(true)
-end
-
-function Typoscope:getViewport()
-    local area = self.view and self.view.visible_area
-    if area and area.w > 0 and area.h > 0 then
-        return { x = area.x, y = area.y, w = area.w, h = area.h }
-    end
-    return { x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
-end
-
-function Typoscope:refreshLines(reset)
-    if reset then self.line_index = 1 end
-    self.lines = {}
-    if not self.is_enabled or not self.ui or not self.ui.rolling then return end
-
-    local viewport = self:getViewport()
-    local ok, result = pcall(self.ui.document.getTextFromPositions, self.ui.document,
-        { x = viewport.x, y = viewport.y },
-        { x = viewport.x + viewport.w, y = viewport.y + viewport.h }, true)
-    if ok and result and result.pos0 and result.pos1
             and self.ui.document.getScreenBoxesFromPositions then
         local boxes_ok, boxes = pcall(self.ui.document.getScreenBoxesFromPositions,
             self.ui.document, result.pos0, result.pos1, true)
@@ -106,6 +37,7 @@ end
 
 function Typoscope:setEnabled(enabled)
     self.is_enabled = enabled
+    self.show_last_line_after_page_turn = nil
     self.settings:saveSetting("enabled", enabled)
     self:refreshLines(true)
     self:redraw()
@@ -118,6 +50,7 @@ end
 
 function Typoscope:onTyposcopeNextLine()
     if not self.is_enabled then return false end
+    self.show_last_line_after_page_turn = nil
     if #self.lines > 0 then
         if self.line_index < #self.lines then
             self.line_index = self.line_index + 1
@@ -126,7 +59,13 @@ function Typoscope:onTyposcopeNextLine()
             self.ui:handleEvent(require("ui/event"):new("GotoViewRel", 1))
         end
     else
-        self.manual_center = math.min(0.95, self.manual_center + self.manual_height / Screen:getHeight())
+        local step = self.manual_height / Screen:getHeight()
+        if self.manual_center + step > 0.95 then
+            self.manual_center = 0.05
+            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", 1))
+        else
+            self.manual_center = self.manual_center + step
+        end
         self.settings:saveSetting("manual_center", self.manual_center)
     end
     self:redraw()
@@ -136,9 +75,20 @@ end
 function Typoscope:onTyposcopePreviousLine()
     if not self.is_enabled then return false end
     if #self.lines > 0 then
-        self.line_index = math.max(1, self.line_index - 1)
+        if self.line_index > 1 then
+            self.line_index = self.line_index - 1
+        else
+            self.show_last_line_after_page_turn = true
+            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", -1))
+        end
     else
-        self.manual_center = math.max(0.05, self.manual_center - self.manual_height / Screen:getHeight())
+        local step = self.manual_height / Screen:getHeight()
+        if self.manual_center - step < 0.05 then
+            self.manual_center = 0.95
+            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", -1))
+        else
+            self.manual_center = self.manual_center - step
+        end
         self.settings:saveSetting("manual_center", self.manual_center)
     end
     self:redraw()
@@ -147,6 +97,10 @@ end
 
 function Typoscope:onPageUpdate()
     self:refreshLines(true)
+    if self.show_last_line_after_page_turn then
+        self.show_last_line_after_page_turn = nil
+        self.line_index = math.max(1, #self.lines)
+    end
 end
 
 Typoscope.onPosUpdate = Typoscope.onPageUpdate

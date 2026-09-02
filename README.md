@@ -30,9 +30,15 @@ Enable mask**.
 
 ## Controls
 
-The plugin menu contains **Next line** and **Previous line**. It also registers
-the following actions with KOReader, so they can be assigned to gestures in
-**Gesture manager**:
+While the mask is enabled, tap KOReader's normal right/forward page-turn zone to
+move the slit down one line, or tap its left/backward zone to move the slit up
+one line. Reaching the final or first line turns the page and moves the slit to
+the corresponding edge. When the mask is disabled, these taps turn pages as
+usual.
+
+The plugin menu also contains **Next line** and **Previous line**, and registers
+the following actions with KOReader so they can be assigned in **Gesture
+manager**:
 
 - Toggle typoscope
 - Typoscope: next line
@@ -48,7 +54,7 @@ The geometry module has no KOReader dependencies. Run its specs from a KOReader
 source checkout after linking this directory into `plugins`:
 
 ```sh
-make testfront T=plugins/typoscope.koplugin/spec/geometry_spec.lua
+make testfront T=plugins/typoscope.koplugin/spec
 ```
 
 Run the emulator in a headless VM with Xvfb:
