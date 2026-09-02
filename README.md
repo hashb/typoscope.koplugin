@@ -1,0 +1,1 @@
+# typoscope.koplugin
