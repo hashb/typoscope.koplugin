@@ -36,6 +36,12 @@ one line. Reaching the final or first line turns the page and moves the slit to
 the corresponding edge. When the mask is disabled, these taps turn pages as
 usual.
 
+Moving within a page requests a cleaning flash only for the strips that become
+covered or exposed, to reduce ghosting of previous lines. Those strips may
+briefly flicker. Actual page turns retain KOReader's normal refresh behavior.
+KOReader's option to avoid flashing UI refreshes suppresses these cleaning
+flashes; disable that option if ghosting persists.
+
 The plugin menu also contains **Next line** and **Previous line**, and registers
 the following actions with KOReader so they can be assigned in **Gesture
 manager**:
@@ -49,6 +55,13 @@ the mask extensively; it provides a quick escape if a document has unexpected
 layout geometry.
 
 ## Development and tests
+
+With Lua and Busted installed, run the startup, touch-control, and geometry tests
+from this plugin directory:
+
+```sh
+busted main_spec.lua spec/geometry_spec.lua
+```
 
 The geometry module has no KOReader dependencies. Run its specs from a KOReader
 source checkout after linking this directory into `plugins`:

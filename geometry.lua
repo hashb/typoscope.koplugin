@@ -29,6 +29,40 @@ function Geometry.masks(viewport, slot)
     }
 end
 
+-- Only the parts belonging to one slot but not the other change on screen.
+-- Keep separated strips separate so unchanged text and black gaps are untouched.
+function Geometry.slotChanges(viewport, old_slot, new_slot)
+    local function bounds(slot)
+        return clamp(slot.y, viewport.y, viewport.y + viewport.h),
+            clamp(slot.y + slot.h, viewport.y, viewport.y + viewport.h)
+    end
+    local old_top, old_bottom = bounds(old_slot)
+    local new_top, new_bottom = bounds(new_slot)
+    local edges = { old_top, old_bottom, new_top, new_bottom }
+    table.sort(edges)
+    local regions = {}
+    for i = 1, #edges - 1 do
+        local top, bottom = edges[i], edges[i + 1]
+        local in_old = top >= old_top and top < old_bottom
+        local in_new = top >= new_top and top < new_bottom
+        if bottom > top and in_old ~= in_new then
+            -- Round outwards to include every changed pixel.
+            top, bottom = math.floor(top), math.ceil(bottom)
+            local previous = regions[#regions]
+            if previous and top <= previous.y + previous.h then
+                previous.h = bottom - previous.y
+            else
+                regions[#regions + 1] = {
+                    x = math.floor(viewport.x), y = top,
+                    w = math.ceil(viewport.x + viewport.w) - math.floor(viewport.x),
+                    h = bottom - top,
+                }
+            end
+        end
+    end
+    return regions
+end
+
 function Geometry.normaliseLines(lines, viewport)
     local visible = {}
     for _, line in ipairs(lines or {}) do
