@@ -5,7 +5,7 @@ function Helpers.newPlugin(options)
     options = options or {}
     local state = {
         page = options.page or 2, position = options.position or 800,
-        page_count = 10, max_position = 7200,
+        page_count = options.page_count or 10, max_position = 7200,
         visible_pages = options.visible_pages or 1,
         width = 600, height = 800, image_count = 0,
         boxes = options.boxes or {
@@ -71,10 +71,19 @@ function Helpers.newPlugin(options)
             end,
             getCurrentPos = function() return state.position end,
             getVisiblePageCount = function() return state.visible_pages end,
+            getPageCount = function(_, internal)
+                return internal and state.page_count or math.ceil(state.page_count / state.visible_pages)
+            end,
             getDrawnImagesStatistics = function() return state.image_count end,
             getTextFromPositions = function(_, from, to, no_highlight)
                 state.extraction = { from, to, no_highlight }
                 if state.extraction_error then error("text extraction failed") end
+                -- CRe keeps a two-page layout at EOF, but an endpoint on the
+                -- missing right-hand page invalidates the whole selection.
+                if state.visible_pages == 2 and state.page == state.page_count
+                        and (from.x > state.width / 2 or to.x > state.width / 2) then
+                    return nil
+                end
                 return { pos0 = "start", pos1 = "end", sboxes = state.boxes }
             end,
         },

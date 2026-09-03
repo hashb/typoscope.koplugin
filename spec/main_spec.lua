@@ -35,6 +35,7 @@ describe("EPUB support", function()
             plugin:setEnabled(true)
             plugin:onPageUpdate()
             plugin:onScreenResize()
+            plugin:onReaderFooterVisibilityChange()
             assert.are.same({}, state.menu)
             assert.are.same({}, state.modules)
             assert.are.same({}, state.zones)
@@ -88,6 +89,60 @@ describe("EPUB support", function()
         local plugin, state = newPlugin()
         plugin:onFlushSettings()
         assert.is_true(state.flushed)
+    end)
+end)
+
+describe("footer visibility changes", function()
+    local boxes = {
+        {x=20,y=700,w=240,h=20}, {x=20,y=735,w=240,h=20},
+        {x=20,y=770,w=240,h=20},
+    }
+
+    it("makes newly exposed bottom lines reachable without scrolling", function()
+        local plugin, state = newPlugin{mode="scroll",boxes=boxes}
+        plugin.view.footer_visible = true
+        plugin:refreshLines(true)
+        plugin.line_index = 2
+        plugin.view.footer_visible = false
+        plugin:onReaderFooterVisibilityChange()
+        assert.are.equal(3, #plugin.lines)
+        assert.are.equal(2, plugin.line_index)
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(770, plugin.lines[plugin.line_index].y)
+        assert.are.same({}, state.events)
+        assert.are.same({widget=plugin.view.dialog,mode="partial"}, state.dirty[1])
+    end)
+
+    it("moves a covered bottom line back into the visible area", function()
+        local plugin = newPlugin{mode="scroll",boxes=boxes}
+        plugin.line_index = 3
+        plugin.view.footer_visible = true
+        plugin:onReaderFooterVisibilityChange()
+        assert.are.equal(2, #plugin.lines)
+        assert.are.equal(2, plugin.line_index)
+        local slot = plugin:getSlot(plugin:getViewport())
+        assert.is_true(slot.h > 0 and slot.y + slot.h <= 760)
+        for _, rect in ipairs(paint(plugin)) do assert.is_true(rect.y + rect.h <= 760) end
+    end)
+
+    it("preserves the active right-page line when left-page lines become visible", function()
+        local plugin = newPlugin{visible_pages=2,boxes={
+            boxes[1], boxes[3], {x=320,y=700,w=240,h=20},
+        }}
+        plugin.view.footer_visible = true
+        plugin:refreshLines(true)
+        plugin.line_index = 2
+        plugin.view.footer_visible = false
+        plugin:onReaderFooterVisibilityChange()
+        assert.are.equal(3, plugin.line_index)
+        assert.are.equal(320, plugin.lines[plugin.line_index].x)
+    end)
+
+    it("does not repaint when the mask is disabled", function()
+        local plugin, state = newPlugin{enabled=false}
+        plugin.view.footer_visible = true
+        plugin:onReaderFooterVisibilityChange()
+        assert.are.same({}, state.dirty)
     end)
 end)
 
@@ -257,6 +312,26 @@ describe("two-page EPUB spreads", function()
         plugin:onTyposcopeNextLine()
         assert.are.equal(4, plugin.line_index)
         assert.is_nil(plugin.page_turn_direction)
+    end)
+
+    it("keeps masking and stepping through a final spread with no right page", function()
+        local plugin, state = newPlugin{visible_pages=2,page=5,page_count=5,boxes={boxes[1],boxes[3]}}
+        assert.are.equal(2, #plugin.lines)
+        assert.is_true(#paint(plugin) > 0)
+        assert.are.equal(300, plugin:getSlot(plugin:getViewport()).w)
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(2, plugin.line_index)
+        assert.are.same({}, state.events)
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(5, state.page)
+        assert.are.equal(2, plugin.line_index)
+    end)
+
+    it("keeps both pages of a complete final spread using internal page counts", function()
+        local plugin = newPlugin{visible_pages=2,page=3,page_count=4,boxes=boxes}
+        assert.are.equal(4, #plugin.lines)
+        plugin.line_index = 3
+        assert.are.equal(300, plugin:getSlot(plugin:getViewport()).x)
     end)
 
     it("rebuilds column widths after resizing", function()

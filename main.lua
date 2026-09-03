@@ -128,10 +128,17 @@ function Typoscope:getPageAreas(viewport)
     -- Split at the screen midpoint, not getPageOffsetX(): its rectangles can
     -- overlap in the gutter when CRe adjusts the inner margins.
     local width = math.floor(viewport.w / 2)
-    return {
+    local areas = {
         { x = viewport.x, y = viewport.y, w = width, h = viewport.h },
-        { x = viewport.x + width, y = viewport.y, w = viewport.w - width, h = viewport.h },
     }
+    -- Visible page count describes the layout even if the final right page
+    -- does not exist. Compare internal page numbers to detect that case.
+    if document:getCurrentPage(true) < document:getPageCount(true) then
+        areas[#areas + 1] = {
+            x = viewport.x + width, y = viewport.y, w = viewport.w - width, h = viewport.h,
+        }
+    end
+    return areas
 end
 
 function Typoscope:getLocation()
@@ -147,13 +154,17 @@ function Typoscope:refreshLines(reset)
     if not self.is_supported or not self.is_enabled or not self.ui.document then return end
 
     local viewport = self:getViewport()
+    local areas = self:getPageAreas(viewport)
+    local last_area = areas[#areas]
+    -- Keep the endpoint on an existing page: CRe rejects a selection whose
+    -- endpoint falls on the empty right half of the final spread.
     local ok, result = pcall(self.ui.document.getTextFromPositions, self.ui.document,
         { x = viewport.x, y = viewport.y },
-        { x = viewport.x + viewport.w, y = viewport.y + viewport.h }, true)
+        { x = last_area.x + last_area.w, y = last_area.y + last_area.h }, true)
     -- getTextFromPositions already supplies screen boxes; no second extraction
     -- is needed. An empty/failed extraction leaves the page unmasked.
     if ok and result and type(result.sboxes) == "table" then
-        for _, area in ipairs(self:getPageAreas(viewport)) do
+        for _, area in ipairs(areas) do
             for _, line in ipairs(Geometry.normaliseLines(result.sboxes, area)) do
                 line.area = area
                 self.lines[#self.lines + 1] = line
@@ -262,6 +273,24 @@ function Typoscope:onPageUpdate()
 end
 
 Typoscope.onPosUpdate = Typoscope.onPageUpdate
+
+function Typoscope:onReaderFooterVisibilityChange()
+    if not self.is_supported or not self.is_enabled then return end
+    local current_line = self.lines[self.line_index]
+    self:refreshLines(false)
+    -- Footer toggles do not reflow text. Preserve the same visual line even
+    -- when newly exposed lines on the left shift a right-page line's index.
+    if current_line then
+        for index, line in ipairs(self.lines) do
+            if line.y == current_line.y and line.area.x == current_line.area.x then
+                self.line_index = index
+                break
+            end
+        end
+    end
+    -- KOReader may otherwise repaint only the footer, leaving the mask stale.
+    self:redraw()
+end
 
 function Typoscope:onCloseDocument()
     self.is_enabled = false
