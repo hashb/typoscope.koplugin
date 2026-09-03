@@ -10,6 +10,11 @@ overlay around the current line, like placing two pieces of paper over a printed
 page. The overlay is dark by default and can be switched to light. It does
 **not** recolor or modify the book's text.
 
+Typoscope dark             |  Typoscope Light
+:-------------------------:|:-------------------------:
+![](docs/assets/images/screenshot-dark.png)  |  ![](docs/assets/images/screenshot-light.png)
+
+
 ## Status and document support
 
 - EPUB, MOBI, FB2, HTML, TXT, RTF and other formats opened with KOReader's
