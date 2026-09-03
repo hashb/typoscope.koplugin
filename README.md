@@ -11,9 +11,9 @@ around the selected line. The effect is the same as two sheets of paper on a
 printed page. The mask is dark by default. You can change the mask to light.
 The plugin does **not** change the color or the text of the book.
 
-Typoscope dark             |  Typoscope Light
-:-------------------------:|:-------------------------:
-![](docs/assets/images/screenshot-dark.png)  |  ![](docs/assets/images/screenshot-light.png)
+Original                   |  Typoscope dark             |  Typoscope Light
+:-------------------------:|:-------------------------:|:-------------------------:
+![Original page](docs/assets/images/screenshot-original.png)  |  ![Page with dark mask](docs/assets/images/screenshot-dark.png)  |  ![Page with light mask](docs/assets/images/screenshot-light.png)
 
 
 ## Status and document support
