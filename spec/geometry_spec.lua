@@ -87,4 +87,19 @@ describe("typoscope geometry", function()
         assert.are.equal(2, #lines)
         assert.are.same({ x = 20, y = 100, w = 260, h = 20 }, lines[1])
     end)
+
+    it("merges drop caps with line 1 without swallowing subsequent lines", function()
+        local lines = Geometry.normaliseLines({
+            { x = 20, y = 100, w = 40, h = 60 },
+            { x = 70, y = 100, w = 300, h = 20 },
+            { x = 70, y = 120, w = 300, h = 20 },
+            { x = 70, y = 140, w = 300, h = 20 },
+            { x = 20, y = 160, w = 350, h = 20 },
+        }, viewport)
+        assert.are.equal(4, #lines)
+        assert.are.same({ x = 20, y = 100, w = 350, h = 60 }, lines[1])
+        assert.are.equal(120, lines[2].y)
+        assert.are.equal(140, lines[3].y)
+        assert.are.equal(160, lines[4].y)
+    end)
 end)

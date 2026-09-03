@@ -38,12 +38,22 @@ usual.
 
 Moving within a page requests a cleaning flash only for the strips that become
 covered or exposed, to reduce ghosting of previous lines. Those strips may
-briefly flicker. Actual page turns retain KOReader's normal refresh behavior.
-KOReader's option to avoid flashing UI refreshes suppresses these cleaning
-flashes; disable that option if ghosting persists.
+briefly flicker. This can be toggled via **Flash screen on line change** in the
+plugin menu. When disabled, fast partial refreshes are used instead. Actual
+page turns retain KOReader's normal refresh behavior. KOReader's global option
+to avoid flashing UI refreshes also suppresses cleaning flashes.
 
-The plugin menu also contains **Next line** and **Previous line**, and registers
-the following actions with KOReader so they can be assigned in **Gesture
+The plugin menu under **Tools → Typoscope reading mask** contains:
+
+- **Enable mask**: Toggle the reading mask on or off.
+- **Next line**: Advance the reading slit down one line.
+- **Previous line**: Move the reading slit up one line.
+- **Flash screen on line change**: Toggle regional e-ink cleaning flashes on line steps.
+- **Reading slot height**: Configure manual slot height in pixels for fixed-layout/PDF documents.
+- **Line padding**: Adjust vertical padding added around detected reflowable lines.
+- **Leave pages containing images unmasked**: Keep pages with image content uncovered.
+
+The plugin also registers the following actions with KOReader so they can be assigned in **Gesture
 manager**:
 
 - Toggle typoscope
@@ -56,15 +66,14 @@ layout geometry.
 
 ## Development and tests
 
-With Lua and Busted installed, run the startup, touch-control, and geometry tests
+With Lua and Busted installed, run the startup, touch-control, refresh, and geometry tests
 from this plugin directory:
 
 ```sh
-busted main_spec.lua spec/geometry_spec.lua
+busted
 ```
 
-The geometry module has no KOReader dependencies. Run its specs from a KOReader
-source checkout after linking this directory into `plugins`:
+Run all plugin specs from a KOReader source checkout after linking this directory into `plugins`:
 
 ```sh
 make testfront T=plugins/typoscope.koplugin/spec

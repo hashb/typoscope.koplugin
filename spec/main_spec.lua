@@ -13,6 +13,7 @@ package.preload.luasettings = function()
     return { open = function()
         return {
             isTrue = function() return false end,
+            nilOrTrue = function() return true end,
             readSetting = function() end,
             saveSetting = function() end,
         }
@@ -21,11 +22,15 @@ end
 package.preload.device = function()
     return {
         isTouchDevice = function() return true end,
-        screen = { getWidth = function() return 600 end, getHeight = function() return 800 end },
+        screen = {
+            getWidth = function() return 600 end,
+            getHeight = function() return 800 end,
+            scaleBySize = function(_, sz) return sz end,
+        },
     }
 end
 package.preload["ui/uimanager"] = function()
-    return {}
+    return { show = function() end }
 end
 package.preload["ui/geometry"] = function()
     return { new = function(_, region) return region end }
@@ -35,6 +40,9 @@ package.preload["ui/event"] = function()
 end
 package.preload["ui/widget/widget"] = function()
     return { extend = function(_, definition) return definition end }
+end
+package.preload["ui/widget/spinwidget"] = function()
+    return { new = function(_, definition) return definition end }
 end
 package.preload.gettext = function()
     return function(text) return text end
@@ -97,6 +105,7 @@ describe("typoscope screen refreshes", function()
     local function makePlugin()
         return setmetatable({
             is_enabled = true,
+            flash_on_line_change = true,
             lines = {
                 { x = 20, y = 100, w = 400, h = 20 },
                 { x = 20, y = 125, w = 400, h = 20 },
@@ -121,13 +130,27 @@ describe("typoscope screen refreshes", function()
         end
     end)
 
-    it("limits cleaning flashes for manual slot movements to the changed band", function()
+    it("uses partial refresh instead of flashui when flash_on_line_change is disabled", function()
         local plugin = makePlugin()
-        plugin.lines = {}
-        plugin.view.visible_area = nil
-        plugin.manual_center, plugin.manual_height = 0.5, 40
+        plugin.flash_on_line_change = false
+        dirty = {}
+        assert.is_true(plugin:onTyposcopeNextLine())
+        assert.are.same({
+            { widget = plugin.view.dialog, mode = "partial",
+                region = { x = 10, y = 97, w = 560, h = 25 } },
+            { widget = plugin.view.dialog, mode = "partial",
+                region = { x = 10, y = 123, w = 560, h = 25 } },
+        }, dirty)
+    end)
+
+    it("limits cleaning flashes for manual slot movements to the changed band", function()
         for _, method in ipairs({ "onTyposcopeNextLine", "onTyposcopePreviousLine" }) do
             dirty = {}
+            local plugin = makePlugin()
+            plugin.lines = {}
+            plugin.view.visible_area = nil
+            plugin.manual_height = 40
+            plugin.manual_center = method == "onTyposcopeNextLine" and 0.5 or 0.55
             plugin[method](plugin)
             assert.are.same({
                 { widget = plugin.view.dialog, mode = "flashui",
@@ -168,7 +191,8 @@ describe("typoscope screen refreshes", function()
                 plugin.line_index = direction == 1 and #plugin.lines or 1
                 if manual then
                     plugin.lines = {}
-                    plugin.manual_center = direction == 1 and 0.95 or 0.05
+                    plugin.manual_height = 40
+                    plugin.manual_center = direction == 1 and 0.98 or 0.02
                 end
                 local events = {}
                 plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
@@ -181,6 +205,48 @@ describe("typoscope screen refreshes", function()
                 assert.are.same({ { widget = plugin.view.dialog, mode = "partial" } }, dirty)
             end
         end
+    end)
+
+    it("does not leak show_last_line_after_page_turn when previous line is called on page 1", function()
+        local plugin = makePlugin()
+        plugin.line_index = 1
+        plugin.ui.document.getCurrentPage = function() return 1 end
+        plugin.ui.document.getPageCount = function() return 10 end
+        local events = {}
+        plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
+        assert.is_true(plugin:onTyposcopePreviousLine())
+        assert.are.same({}, events)
+        assert.is_nil(plugin.show_last_line_after_page_turn)
+    end)
+
+    it("does not wrap to line 1 when next line is called on the last page", function()
+        local plugin = makePlugin()
+        plugin.line_index = #plugin.lines
+        plugin.ui.document.getCurrentPage = function() return 10 end
+        plugin.ui.document.getPageCount = function() return 10 end
+        local events = {}
+        plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
+        assert.is_true(plugin:onTyposcopeNextLine())
+        assert.are.same({}, events)
+        assert.are.equal(#plugin.lines, plugin.line_index)
+    end)
+
+    it("resets manual slot to top on normal page turns and bottom on backward page turns", function()
+        local plugin = makePlugin()
+        plugin.lines = {}
+        plugin.manual_height = 40
+        plugin.manual_center = 0.5
+        plugin.view.visible_area = { x = 0, y = 0, w = 600, h = 800 }
+
+        -- Forward / external page update
+        plugin:onPageUpdate()
+        assert.are.equal(0.025, plugin.manual_center)
+
+        -- Backward page update
+        plugin.show_last_line_after_page_turn = true
+        plugin:onPageUpdate()
+        assert.are.equal(0.975, plugin.manual_center)
+        assert.is_nil(plugin.show_last_line_after_page_turn)
     end)
 end)
 
@@ -231,5 +297,21 @@ describe("typoscope tap zones", function()
         Device.isTouchDevice = original
         assert.is_true(ok)
         assert.is_nil(zones)
+    end)
+
+    it("re-registers touch zones on resetLayout and onScreenResize", function()
+        local plugin, zones = makePlugin(true)
+        local registered_count = 0
+        plugin.ui.registerTouchZones = function(_, z)
+            registered_count = registered_count + 1
+        end
+        plugin.refreshLines = function() end
+        plugin.redraw = function() end
+
+        plugin:resetLayout()
+        assert.are.equal(1, registered_count)
+
+        plugin:onScreenResize()
+        assert.are.equal(2, registered_count)
     end)
 end)

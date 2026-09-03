@@ -50,7 +50,7 @@ function Geometry.slotChanges(viewport, old_slot, new_slot)
             top, bottom = math.floor(top), math.ceil(bottom)
             local previous = regions[#regions]
             if previous and top <= previous.y + previous.h then
-                previous.h = bottom - previous.y
+                previous.h = math.max(previous.h, bottom - previous.y)
             else
                 regions[#regions + 1] = {
                     x = math.floor(viewport.x), y = top,
@@ -77,13 +77,22 @@ function Geometry.normaliseLines(lines, viewport)
     end)
 
     -- Segmented selections (notably bidi text) may return several boxes for
-    -- one visual line. Merge boxes whose vertical spans substantially overlap.
+    -- one visual line. Merge boxes whose vertical spans substantially overlap
+    -- or align at the top (e.g. drop caps), but avoid cascading into subsequent lines.
     local result = {}
     for _, line in ipairs(visible) do
         local previous = result[#result]
         local overlap = previous and math.min(previous.y + previous.h, line.y + line.h)
             - math.max(previous.y, line.y) or 0
-        if previous and overlap >= math.min(previous.h, line.h) / 2 then
+        local same_line = false
+        if previous and overlap > 0 then
+            if math.abs(previous.y - line.y) <= 4 then
+                same_line = true
+            elseif overlap >= math.max(previous.h, line.h) * 0.5 then
+                same_line = true
+            end
+        end
+        if previous and same_line then
             local right = math.max(previous.x + previous.w, line.x + line.w)
             local bottom = math.max(previous.y + previous.h, line.y + line.h)
             previous.x = math.min(previous.x, line.x)

@@ -2,6 +2,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local DataStorage = require("datastorage")
 local Device = require("device")
 local Dispatcher = require("dispatcher")
+local Event = require("ui/event")
 local Geom = require("ui/geometry")
 local LuaSettings = require("luasettings")
 local Screen = Device.screen
@@ -9,13 +10,27 @@ local UIManager = require("ui/uimanager")
 local Widget = require("ui/widget/widget")
 local _ = require("gettext")
 
-local Geometry = require("geometry")
+local Geometry
+local ok, mod = pcall(require, "plugins/typoscope.koplugin/geometry")
+if ok and mod then
+    Geometry = mod
+else
+    Geometry = require("geometry")
+end
+
+local function scaleBySize(size)
+    if Screen and Screen.scaleBySize then
+        return Screen:scaleBySize(size)
+    end
+    return size
+end
 
 local Typoscope = Widget:extend{
     name = "typoscope",
     is_doc_only = true,
     is_enabled = false,
     leave_image_pages_unmasked = false,
+    flash_on_line_change = true,
     line_index = 1,
     line_padding = 3,
     manual_height = 42,
@@ -27,8 +42,9 @@ function Typoscope:init()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/typoscope.lua")
     self.is_enabled = self.settings:isTrue("enabled")
     self.leave_image_pages_unmasked = self.settings:isTrue("leave_image_pages_unmasked")
-    self.line_padding = self.settings:readSetting("line_padding") or self.line_padding
-    self.manual_height = self.settings:readSetting("manual_height") or self.manual_height
+    self.flash_on_line_change = self.settings:nilOrTrue("flash_on_line_change")
+    self.line_padding = self.settings:readSetting("line_padding") or scaleBySize(self.line_padding)
+    self.manual_height = self.settings:readSetting("manual_height") or scaleBySize(self.manual_height)
     self.manual_center = self.settings:readSetting("manual_center") or self.manual_center
     self:registerActions()
 end
@@ -44,6 +60,8 @@ function Typoscope.registerActions()
         category = "none", event = "TyposcopePreviousLine", title = _("Typoscope: previous line"), reader = true,
     })
 end
+
+Typoscope.onDispatcherRegisterActions = Typoscope.registerActions
 
 function Typoscope:onReaderReady()
     self.ui.menu:registerToMainMenu(self)
@@ -137,11 +155,11 @@ function Typoscope:redrawSlotChange(viewport, old_slot)
     if not self.view or not self.view.dialog then return end
     if self.leave_image_pages_unmasked and self:pageHasImages() then return end
     local new_slot = self:getSlot(viewport)
+    local refresh_mode = self.flash_on_line_change and "flashui" or "partial"
     for _, region in ipairs(Geometry.slotChanges(viewport, old_slot, new_slot)) do
-        -- Clean residual text when covering or exposing a strip. "flashui"
-        -- flashes only this region and does not advance the page-refresh counter.
-        -- Keep repainting the reader so newly exposed text is restored.
-        UIManager:setDirty(self.view.dialog, "flashui", Geom:new(region))
+        -- Clean residual text when covering or exposing a strip.
+        -- Uses flashui if regional flashing is enabled, partial otherwise.
+        UIManager:setDirty(self.view.dialog, refresh_mode, Geom:new(region))
     end
 end
 
@@ -168,16 +186,31 @@ function Typoscope:onTyposcopeNextLine()
         if self.line_index < #self.lines then
             self.line_index = self.line_index + 1
         else
+            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            local total_pages = self.ui and self.ui.document and self.ui.document.getPageCount and self.ui.document:getPageCount()
+            if cur_page and total_pages and cur_page >= total_pages then
+                return true
+            end
             self.line_index = 1
             page_turn = true
-            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", 1))
+            self.ui:handleEvent(Event:new("GotoViewRel", 1))
         end
     else
-        local step = self.manual_height / Screen:getHeight()
-        if self.manual_center + step > 0.95 then
-            self.manual_center = 0.05
+        local min_center = (self.manual_height / 2) / viewport.h
+        local max_center = 1 - min_center
+        local step = self.manual_height / viewport.h
+        if self.manual_center + step > max_center then
+            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            local total_pages = self.ui and self.ui.document and self.ui.document.getPageCount and self.ui.document:getPageCount()
+            if cur_page and total_pages and cur_page >= total_pages then
+                self.manual_center = max_center
+                self.settings:saveSetting("manual_center", self.manual_center)
+                self:redrawSlotChange(viewport, old_slot)
+                return true
+            end
+            self.manual_center = min_center
             page_turn = true
-            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", 1))
+            self.ui:handleEvent(Event:new("GotoViewRel", 1))
         else
             self.manual_center = self.manual_center + step
         end
@@ -200,16 +233,38 @@ function Typoscope:onTyposcopePreviousLine()
         if self.line_index > 1 then
             self.line_index = self.line_index - 1
         else
+            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            if cur_page and cur_page <= 1 then
+                return true
+            end
             self.show_last_line_after_page_turn = true
             page_turn = true
-            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", -1))
+            self.ui:handleEvent(Event:new("GotoViewRel", -1))
+            local new_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            if new_page and new_page == cur_page then
+                self.show_last_line_after_page_turn = nil
+            end
         end
     else
-        local step = self.manual_height / Screen:getHeight()
-        if self.manual_center - step < 0.05 then
-            self.manual_center = 0.95
+        local min_center = (self.manual_height / 2) / viewport.h
+        local max_center = 1 - min_center
+        local step = self.manual_height / viewport.h
+        if self.manual_center - step < min_center then
+            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            if cur_page and cur_page <= 1 then
+                self.manual_center = min_center
+                self.settings:saveSetting("manual_center", self.manual_center)
+                self:redrawSlotChange(viewport, old_slot)
+                return true
+            end
+            self.show_last_line_after_page_turn = true
+            self.manual_center = max_center
             page_turn = true
-            self.ui:handleEvent(require("ui/event"):new("GotoViewRel", -1))
+            self.ui:handleEvent(Event:new("GotoViewRel", -1))
+            local new_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
+            if new_page and new_page == cur_page then
+                self.show_last_line_after_page_turn = nil
+            end
         else
             self.manual_center = self.manual_center - step
         end
@@ -225,9 +280,22 @@ end
 
 function Typoscope:onPageUpdate()
     self:refreshLines(true)
+    local viewport = self:getViewport()
+    local min_center = (self.manual_height / 2) / viewport.h
+    local max_center = 1 - min_center
     if self.show_last_line_after_page_turn then
         self.show_last_line_after_page_turn = nil
-        self.line_index = math.max(1, #self.lines)
+        if #self.lines > 0 then
+            self.line_index = math.max(1, #self.lines)
+        else
+            self.manual_center = max_center
+            self.settings:saveSetting("manual_center", self.manual_center)
+        end
+    else
+        if #self.lines == 0 then
+            self.manual_center = min_center
+            self.settings:saveSetting("manual_center", self.manual_center)
+        end
     end
 end
 
@@ -235,6 +303,13 @@ Typoscope.onPosUpdate = Typoscope.onPageUpdate
 
 function Typoscope:resetLayout()
     self:refreshLines(false)
+    self:setupTouchZones()
+end
+
+function Typoscope:onScreenResize()
+    self:setupTouchZones()
+    self:refreshLines(false)
+    self:redraw()
 end
 
 function Typoscope:addToMainMenu(menu_items)
@@ -256,6 +331,50 @@ function Typoscope:addToMainMenu(menu_items)
                 text = _("Previous line"),
                 enabled_func = function() return self.is_enabled end,
                 callback = function() self:onTyposcopePreviousLine() end,
+            },
+            {
+                text = _("Flash screen on line change"),
+                checked_func = function() return self.flash_on_line_change end,
+                callback = function()
+                    self.flash_on_line_change = not self.flash_on_line_change
+                    self.settings:saveSetting("flash_on_line_change", self.flash_on_line_change)
+                end,
+            },
+            {
+                text = _("Reading slot height"),
+                callback = function()
+                    local SpinWidget = require("ui/widget/spinwidget")
+                    UIManager:show(SpinWidget:new{
+                        title_text = _("Reading slot height"),
+                        value = self.manual_height,
+                        value_min = 10,
+                        value_max = 500,
+                        value_step = 2,
+                        callback = function(spin)
+                            self.manual_height = spin.value
+                            self.settings:saveSetting("manual_height", self.manual_height)
+                            self:redraw()
+                        end,
+                    })
+                end,
+            },
+            {
+                text = _("Line padding"),
+                callback = function()
+                    local SpinWidget = require("ui/widget/spinwidget")
+                    UIManager:show(SpinWidget:new{
+                        title_text = _("Line padding"),
+                        value = self.line_padding,
+                        value_min = 0,
+                        value_max = 30,
+                        value_step = 1,
+                        callback = function(spin)
+                            self.line_padding = spin.value
+                            self.settings:saveSetting("line_padding", self.line_padding)
+                            self:redraw()
+                        end,
+                    })
+                end,
             },
             {
                 text = _("Leave pages containing images unmasked"),
