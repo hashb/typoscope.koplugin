@@ -12,62 +12,80 @@ function Geometry.slotForLine(viewport, line, padding)
     return { x = viewport.x, y = top, w = viewport.w, h = math.max(0, bottom - top) }
 end
 
-function Geometry.manualSlot(viewport, center_ratio, height)
-    height = clamp(height, 1, viewport.h)
-    local center = viewport.y + viewport.h * clamp(center_ratio, 0, 1)
-    local top = clamp(math.floor(center - height / 2), viewport.y, viewport.y + viewport.h - height)
-    return { x = viewport.x, y = top, w = viewport.w, h = height }
+local function clipped(viewport, rect)
+    local x, w = rect.x or viewport.x, rect.w or viewport.w
+    local left = clamp(x, viewport.x, viewport.x + viewport.w)
+    local right = clamp(x + w, viewport.x, viewport.x + viewport.w)
+    local top = clamp(rect.y, viewport.y, viewport.y + viewport.h)
+    local bottom = clamp(rect.y + rect.h, viewport.y, viewport.y + viewport.h)
+    return { x = left, y = top, w = math.max(0, right - left), h = math.max(0, bottom - top) }
+end
+
+-- Append the parts of a rectangle outside another rectangle, without overlap.
+local function subtract(rect, other, regions)
+    local function add(x, y, w, h)
+        if w > 0 and h > 0 then regions[#regions + 1] = { x = x, y = y, w = w, h = h } end
+    end
+    local left = math.max(rect.x, other.x)
+    local right = math.min(rect.x + rect.w, other.x + other.w)
+    local top = math.max(rect.y, other.y)
+    local bottom = math.min(rect.y + rect.h, other.y + other.h)
+    if right <= left or bottom <= top then
+        add(rect.x, rect.y, rect.w, rect.h)
+        return
+    end
+    add(rect.x, rect.y, rect.w, top - rect.y)
+    add(rect.x, bottom, rect.w, rect.y + rect.h - bottom)
+    add(rect.x, top, left - rect.x, bottom - top)
+    add(right, top, rect.x + rect.w - right, bottom - top)
 end
 
 function Geometry.masks(viewport, slot)
-    local top_height = math.max(0, slot.y - viewport.y)
-    local bottom_y = math.min(viewport.y + viewport.h, slot.y + slot.h)
-    return {
-        { x = viewport.x, y = viewport.y, w = viewport.w, h = top_height },
-        { x = viewport.x, y = bottom_y, w = viewport.w,
-          h = math.max(0, viewport.y + viewport.h - bottom_y) },
-    }
+    local masks = {}
+    subtract(viewport, clipped(viewport, slot), masks)
+    return masks
 end
 
--- Only the parts belonging to one slot but not the other change on screen.
--- Keep separated strips separate so unchanged text and black gaps are untouched.
+-- Refresh only pixels whose mask state changes, including a move between the
+-- two pages of a spread. Regions never span unchanged text or black gaps.
 function Geometry.slotChanges(viewport, old_slot, new_slot)
-    local function bounds(slot)
-        return clamp(slot.y, viewport.y, viewport.y + viewport.h),
-            clamp(slot.y + slot.h, viewport.y, viewport.y + viewport.h)
-    end
-    local old_top, old_bottom = bounds(old_slot)
-    local new_top, new_bottom = bounds(new_slot)
-    local edges = { old_top, old_bottom, new_top, new_bottom }
-    table.sort(edges)
+    local old = clipped(viewport, old_slot)
+    local new = clipped(viewport, new_slot)
     local regions = {}
-    for i = 1, #edges - 1 do
-        local top, bottom = edges[i], edges[i + 1]
-        local in_old = top >= old_top and top < old_bottom
-        local in_new = top >= new_top and top < new_bottom
-        if bottom > top and in_old ~= in_new then
-            -- Round outwards to include every changed pixel.
-            top, bottom = math.floor(top), math.ceil(bottom)
-            local previous = regions[#regions]
-            if previous and top <= previous.y + previous.h then
-                previous.h = math.max(previous.h, bottom - previous.y)
-            else
-                regions[#regions + 1] = {
-                    x = math.floor(viewport.x), y = top,
-                    w = math.ceil(viewport.x + viewport.w) - math.floor(viewport.x),
-                    h = bottom - top,
-                }
-            end
+    subtract(old, new, regions)
+    subtract(new, old, regions)
+    for _, region in ipairs(regions) do
+        local right, bottom = math.ceil(region.x + region.w), math.ceil(region.y + region.h)
+        region.x, region.y = math.floor(region.x), math.floor(region.y)
+        region.w, region.h = right - region.x, bottom - region.y
+    end
+    table.sort(regions, function(a, b)
+        if a.y == b.y then return a.x < b.x end
+        return a.y < b.y
+    end)
+    -- Coalesce vertically adjacent strips of the same width.
+    local result = {}
+    for _, region in ipairs(regions) do
+        local previous = result[#result]
+        if previous and previous.x == region.x and previous.w == region.w
+                and region.y <= previous.y + previous.h then
+            previous.h = math.max(previous.h, region.y + region.h - previous.y)
+        else
+            result[#result + 1] = region
         end
     end
-    return regions
+    return result
 end
 
 function Geometry.normaliseLines(lines, viewport)
     local visible = {}
     for _, line in ipairs(lines or {}) do
-        if line.h and line.h > 0 and line.y + line.h > viewport.y
-                and line.y < viewport.y + viewport.h then
+        -- Assign segments by their horizontal center, so a glyph extending into
+        -- the gutter cannot duplicate the same line on both pages of a spread.
+        local center = line.x + line.w / 2
+        if line.h and line.h > 0 and line.w > 0
+                and center >= viewport.x and center < viewport.x + viewport.w
+                and line.y + line.h > viewport.y and line.y < viewport.y + viewport.h then
             visible[#visible + 1] = { x = line.x, y = line.y, w = line.w, h = line.h }
         end
     end

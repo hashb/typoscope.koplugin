@@ -1,317 +1,325 @@
-package.path = "./?.lua;" .. package.path
+local spec_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+local newPlugin = dofile(spec_dir .. "helpers.lua").newPlugin
 
-package.preload["ffi/blitbuffer"] = function()
-    return { COLOR_BLACK = 0 }
-end
-package.preload.datastorage = function()
-    return { getSettingsDir = function() return "/tmp" end }
-end
-package.preload.dispatcher = function()
-    return { registerAction = function() end }
-end
-package.preload.luasettings = function()
-    return { open = function()
-        return {
-            isTrue = function() return false end,
-            nilOrTrue = function() return true end,
-            readSetting = function() end,
-            saveSetting = function() end,
-        }
-    end }
-end
-package.preload.device = function()
-    return {
-        isTouchDevice = function() return true end,
-        screen = {
-            getWidth = function() return 600 end,
-            getHeight = function() return 800 end,
-            scaleBySize = function(_, sz) return sz end,
-        },
-    }
-end
-package.preload["ui/uimanager"] = function()
-    return { show = function() end }
-end
-package.preload["ui/geometry"] = function()
-    return { new = function(_, region) return region end }
-end
-package.preload["ui/event"] = function()
-    return { new = function(_, name, direction) return { name = name, direction = direction } end }
-end
-package.preload["ui/widget/widget"] = function()
-    return { extend = function(_, definition) return definition end }
-end
-package.preload["ui/widget/spinwidget"] = function()
-    return { new = function(_, definition) return definition end }
-end
-package.preload.gettext = function()
-    return function(text) return text end
+local function paint(plugin)
+    local rects = {}
+    plugin:paintTo({ paintRect = function(_, x, y, w, h)
+        rects[#rects + 1] = { x = x, y = y, w = w, h = h }
+    end }, 0, 0)
+    return rects
 end
 
-local Typoscope = dofile("main.lua")
-
-describe("typoscope startup", function()
-    it("initializes and registers its Tools menu entry when a book is ready", function()
-        local menu_items, view_modules = {}, {}
-        local touch_zones
-        local plugin = setmetatable({
-            ui = {
-                menu = {
-                    registerToMainMenu = function(_, item) item:addToMainMenu(menu_items) end,
-                },
-                registerTouchZones = function(_, zones) touch_zones = zones end,
-            },
-            view = {
-                registerViewModule = function(_, name, module) view_modules[name] = module end,
-                getTapZones = function() return {}, {} end,
-            },
-        }, { __index = Typoscope })
-
-        plugin:init()
-        plugin:onReaderReady()
-
-        assert.are.equal("typoscope", plugin.name)
+describe("EPUB support", function()
+    it("registers the Tools menu and view module for EPUBs", function()
+        local plugin, state = newPlugin{file = "BOOK.EPUB", enabled = false}
         assert.is_true(plugin.is_doc_only)
-        assert.are.equal(plugin, view_modules.typoscope)
-        assert.are.equal("Typoscope reading mask", menu_items.typoscope.text)
-        assert.are.equal("more_tools", menu_items.typoscope.sorting_hint)
-        assert.are.same({}, plugin.lines)
-        assert.are.equal(2, #touch_zones)
-        local toggle = menu_items.typoscope.sub_item_table[1]
+        assert.are.equal(plugin, state.modules.typoscope)
+        assert.are.equal("more_tools", state.menu.typoscope.sorting_hint)
+        local toggle = state.menu.typoscope.sub_item_table[1]
         assert.is_false(toggle.checked_func())
         toggle.callback()
         assert.is_true(toggle.checked_func())
+        assert.are.equal(2, #plugin.lines)
         toggle.callback()
         assert.is_false(toggle.checked_func())
+        assert.is_false(state.settings.enabled)
+    end)
+
+    it("stays inactive on other formats without erasing the EPUB preference", function()
+        for _, file in ipairs({"book.pdf", "book.djvu", "book.html", "book.fb2", "book.txt", "book.epub.zip"}) do
+            local plugin, state = newPlugin{file = file}
+            assert.is_false(plugin.is_enabled)
+            assert.is_false(plugin:onTyposcopeToggle())
+            assert.is_false(plugin:onTyposcopeNextLine())
+            assert.is_false(plugin:onTyposcopePreviousLine())
+            plugin:setEnabled(true)
+            plugin:onPageUpdate()
+            plugin:onScreenResize()
+            assert.are.same({}, state.menu)
+            assert.are.same({}, state.modules)
+            assert.are.same({}, state.zones)
+            assert.are.same({}, paint(plugin))
+            assert.are.same({}, state.events)
+            assert.are.same({}, state.dirty)
+            assert.is_true(state.settings.enabled)
+            plugin:onCloseDocument()
+        end
+    end)
+
+    it("requires the reflowable reader even for a file named .epub", function()
+        local plugin, state = newPlugin{paging = true}
+        assert.is_false(plugin.is_enabled)
+        assert.are.same({}, state.modules)
+        plugin:onCloseDocument()
+    end)
+
+    it("leaves blank and unextractable EPUB pages visible with normal navigation", function()
+        for _, fail in ipairs({false, true}) do
+            local plugin, state = newPlugin{boxes = {}}
+            state.extraction_error = fail
+            plugin:refreshLines(true)
+            assert.is_nil(plugin:getSlot(plugin:getViewport()))
+            assert.are.same({}, paint(plugin))
+            assert.is_true(plugin:onTyposcopeNextLine())
+            assert.are.equal(3, state.page)
+            assert.are.equal(1, #state.events)
+        end
+    end)
+
+    it("keeps image pages unmasked and turns them with one tap", function()
+        local plugin, state = newPlugin()
+        plugin.leave_image_pages_unmasked = true
+        state.image_count = 1
+        assert.are.same({}, paint(plugin))
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(3, state.page)
+        for _, dirty in ipairs(state.dirty) do assert.are.equal("partial", dirty.mode) end
+    end)
+
+    it("keeps the footer outside the mask and ignores document-space offsets", function()
+        local plugin = newPlugin()
+        plugin.view.visible_area = { x = 120, y = 900, w = 600, h = 800 }
+        plugin.view.footer_visible = true
+        assert.are.same({ x = 0, y = 0, w = 600, h = 760 }, plugin:getViewport())
+        for _, rect in ipairs(paint(plugin)) do assert.is_true(rect.y + rect.h <= 760) end
+    end)
+
+    it("flushes the remaining plugin preferences", function()
+        local plugin, state = newPlugin()
+        plugin:onFlushSettings()
+        assert.is_true(state.flushed)
     end)
 end)
 
-describe("typoscope screen refreshes", function()
-    local UIManager = require("ui/uimanager")
-    local dirty, original_set_dirty
-
-    before_each(function()
-        dirty = {}
-        original_set_dirty = UIManager.setDirty
-        UIManager.setDirty = function(_, widget, mode, region)
-            dirty[#dirty + 1] = { widget = widget, mode = mode, region = region }
-        end
-    end)
-
-    after_each(function()
-        UIManager.setDirty = original_set_dirty
-    end)
-
-    local function makePlugin()
-        return setmetatable({
-            is_enabled = true,
-            flash_on_line_change = true,
-            lines = {
-                { x = 20, y = 100, w = 400, h = 20 },
-                { x = 20, y = 125, w = 400, h = 20 },
-            },
-            view = { dialog = {}, visible_area = { x = 10, y = 20, w = 560, h = 760 } },
-            ui = { document = {} },
-            settings = { saveSetting = function() end },
-        }, { __index = Typoscope })
-    end
-
-    it("requests a cleaning flash only for changed strips when moving in either direction", function()
-        local plugin = makePlugin()
-        for _, method in ipairs({ "onTyposcopeNextLine", "onTyposcopePreviousLine" }) do
-            dirty = {}
+describe("line refreshes", function()
+    it("flashes only changed strips in either direction", function()
+        local plugin, state = newPlugin()
+        for _, method in ipairs({"onTyposcopeNextLine", "onTyposcopePreviousLine"}) do
+            state.dirty = {}
             assert.is_true(plugin[method](plugin))
             assert.are.same({
-                { widget = plugin.view.dialog, mode = "flashui",
-                    region = { x = 10, y = 97, w = 560, h = 25 } },
-                { widget = plugin.view.dialog, mode = "flashui",
-                    region = { x = 10, y = 123, w = 560, h = 25 } },
-            }, dirty)
+                { widget = plugin.view.dialog, mode = "flashui", region = {x=0,y=97,w=600,h=25} },
+                { widget = plugin.view.dialog, mode = "flashui", region = {x=0,y=123,w=600,h=25} },
+            }, state.dirty)
         end
     end)
 
-    it("uses partial refresh instead of flashui when flash_on_line_change is disabled", function()
-        local plugin = makePlugin()
+    it("uses partial updates when cleaning flashes are disabled", function()
+        local plugin, state = newPlugin()
         plugin.flash_on_line_change = false
-        dirty = {}
-        assert.is_true(plugin:onTyposcopeNextLine())
-        assert.are.same({
-            { widget = plugin.view.dialog, mode = "partial",
-                region = { x = 10, y = 97, w = 560, h = 25 } },
-            { widget = plugin.view.dialog, mode = "partial",
-                region = { x = 10, y = 123, w = 560, h = 25 } },
-        }, dirty)
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(2, #state.dirty)
+        for _, dirty in ipairs(state.dirty) do assert.are.equal("partial", dirty.mode) end
     end)
 
-    it("limits cleaning flashes for manual slot movements to the changed band", function()
-        for _, method in ipairs({ "onTyposcopeNextLine", "onTyposcopePreviousLine" }) do
-            dirty = {}
-            local plugin = makePlugin()
-            plugin.lines = {}
-            plugin.view.visible_area = nil
-            plugin.manual_height = 40
-            plugin.manual_center = method == "onTyposcopeNextLine" and 0.5 or 0.55
-            plugin[method](plugin)
-            assert.are.same({
-                { widget = plugin.view.dialog, mode = "flashui",
-                    region = { x = 0, y = 380, w = 600, h = 80 } },
-            }, dirty)
-        end
-    end)
-
-    it("does not refresh when the slot is unchanged", function()
-        local plugin = makePlugin()
+    it("does not refresh an unchanged slot or consume actions when disabled", function()
+        local plugin, state = newPlugin()
         plugin.lines[2] = plugin.lines[1]
         plugin:onTyposcopeNextLine()
-        assert.are.same({}, dirty)
-    end)
-
-    it("does not refresh pages intentionally left unmasked", function()
-        local plugin = makePlugin()
-        plugin.leave_image_pages_unmasked = true
-        plugin.ui.document.getDrawnImagesStatistics = function() return 1 end
-        plugin:onTyposcopeNextLine()
-        assert.are.equal(2, plugin.line_index)
-        assert.are.same({}, dirty)
-    end)
-
-    it("does not refresh when the mask is disabled", function()
-        local plugin = makePlugin()
+        assert.are.same({}, state.dirty)
         plugin.is_enabled = false
         assert.is_false(plugin:onTyposcopeNextLine())
         assert.is_false(plugin:onTyposcopePreviousLine())
-        assert.are.same({}, dirty)
-    end)
-
-    it("keeps normal refreshes for page turns in either direction", function()
-        for _, manual in ipairs({ false, true }) do
-            for _, direction in ipairs({ -1, 1 }) do
-                dirty = {}
-                local plugin = makePlugin()
-                plugin.line_index = direction == 1 and #plugin.lines or 1
-                if manual then
-                    plugin.lines = {}
-                    plugin.manual_height = 40
-                    plugin.manual_center = direction == 1 and 0.98 or 0.02
-                end
-                local events = {}
-                plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
-                if direction == 1 then
-                    plugin:onTyposcopeNextLine()
-                else
-                    plugin:onTyposcopePreviousLine()
-                end
-                assert.are.same({ { name = "GotoViewRel", direction = direction } }, events)
-                assert.are.same({ { widget = plugin.view.dialog, mode = "partial" } }, dirty)
-            end
-        end
-    end)
-
-    it("does not leak show_last_line_after_page_turn when previous line is called on page 1", function()
-        local plugin = makePlugin()
-        plugin.line_index = 1
-        plugin.ui.document.getCurrentPage = function() return 1 end
-        plugin.ui.document.getPageCount = function() return 10 end
-        local events = {}
-        plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
-        assert.is_true(plugin:onTyposcopePreviousLine())
-        assert.are.same({}, events)
-        assert.is_nil(plugin.show_last_line_after_page_turn)
-    end)
-
-    it("does not wrap to line 1 when next line is called on the last page", function()
-        local plugin = makePlugin()
-        plugin.line_index = #plugin.lines
-        plugin.ui.document.getCurrentPage = function() return 10 end
-        plugin.ui.document.getPageCount = function() return 10 end
-        local events = {}
-        plugin.ui.handleEvent = function(_, event) events[#events + 1] = event end
-        assert.is_true(plugin:onTyposcopeNextLine())
-        assert.are.same({}, events)
-        assert.are.equal(#plugin.lines, plugin.line_index)
-    end)
-
-    it("resets manual slot to top on normal page turns and bottom on backward page turns", function()
-        local plugin = makePlugin()
-        plugin.lines = {}
-        plugin.manual_height = 40
-        plugin.manual_center = 0.5
-        plugin.view.visible_area = { x = 0, y = 0, w = 600, h = 800 }
-
-        -- Forward / external page update
-        plugin:onPageUpdate()
-        assert.are.equal(0.025, plugin.manual_center)
-
-        -- Backward page update
-        plugin.show_last_line_after_page_turn = true
-        plugin:onPageUpdate()
-        assert.are.equal(0.975, plugin.manual_center)
-        assert.is_nil(plugin.show_last_line_after_page_turn)
+        assert.are.same({}, state.dirty)
     end)
 end)
 
-describe("typoscope tap zones", function()
-    local function makePlugin(enabled)
-        local registered
-        local plugin = setmetatable({
-            is_enabled = enabled,
-            view = {
-                getTapZones = function()
-                    return { ratio_x = 0.25, ratio_y = 0, ratio_w = 0.75, ratio_h = 1 },
-                        { ratio_x = 0, ratio_y = 0, ratio_w = 0.25, ratio_h = 1 }
-                end,
-            },
-            ui = {
-                registerTouchZones = function(_, zones) registered = zones end,
-            },
-        }, { __index = Typoscope })
-        plugin:setupTouchZones()
-        return plugin, registered
-    end
-
-    it("moves the slit instead of turning the page while enabled", function()
-        local plugin, zones = makePlugin(true)
-        local next_calls, previous_calls = 0, 0
-        plugin.onTyposcopeNextLine = function() next_calls = next_calls + 1 return true end
-        plugin.onTyposcopePreviousLine = function() previous_calls = previous_calls + 1 return true end
-
-        assert.is_true(zones[1].handler())
-        assert.is_true(zones[2].handler())
-        assert.are.equal(1, next_calls)
-        assert.are.equal(1, previous_calls)
-        assert.are.same({ "tap_forward" }, zones[1].overrides)
-        assert.are.same({ "tap_backward" }, zones[2].overrides)
-    end)
-
-    it("falls through to normal page turns while disabled", function()
-        local _, zones = makePlugin(false)
-        assert.is_nil(zones[1].handler())
-        assert.is_nil(zones[2].handler())
-    end)
-
-    it("does not register tap zones on devices without touch", function()
-        local Device = require("device")
-        local original = Device.isTouchDevice
-        Device.isTouchDevice = function() return false end
-        local ok, plugin, zones = pcall(makePlugin, true)
-        Device.isTouchDevice = original
-        assert.is_true(ok)
-        assert.is_nil(zones)
-    end)
-
-    it("re-registers touch zones on resetLayout and onScreenResize", function()
-        local plugin, zones = makePlugin(true)
-        local registered_count = 0
-        plugin.ui.registerTouchZones = function(_, z)
-            registered_count = registered_count + 1
+describe("page and scroll navigation", function()
+    it("selects the corresponding edge after an actual page turn", function()
+        for _, direction in ipairs({-1, 1}) do
+            local plugin, state = newPlugin()
+            plugin.line_index = direction == 1 and #plugin.lines or 1
+            plugin:moveLine(direction)
+            assert.are.equal(2 + direction, state.page)
+            assert.are.equal(direction == 1 and 1 or #plugin.lines, plugin.line_index)
+            assert.are.same({{name="GotoViewRel",direction=direction}}, state.events)
+            assert.is_nil(plugin.page_turn_direction)
+            for _, dirty in ipairs(state.dirty) do assert.are.equal("partial", dirty.mode) end
         end
-        plugin.refreshLines = function() end
-        plugin.redraw = function() end
+    end)
 
-        plugin:resetLayout()
-        assert.are.equal(1, registered_count)
+    it("keeps the selected line at document boundaries without a pending direction", function()
+        for _, direction in ipairs({-1, 1}) do
+            local plugin, state = newPlugin{page = direction == 1 and 10 or 1}
+            local old_index = direction == 1 and #plugin.lines or 1
+            plugin.line_index = old_index
+            plugin:moveLine(direction)
+            assert.are.equal(old_index, plugin.line_index)
+            assert.is_nil(plugin.page_turn_direction)
+            -- A later external forward turn must not inherit a failed backward turn.
+            state.page = 5
+            plugin:onPageUpdate()
+            assert.are.equal(1, plugin.line_index)
+        end
+    end)
 
+    it("preserves the current line on same-page redraw events", function()
+        local plugin = newPlugin()
+        plugin.line_index = 2
+        plugin:onPageUpdate()
+        assert.are.equal(2, plugin.line_index)
+    end)
+
+    it("can scroll backward while still on page number one", function()
+        local plugin, state = newPlugin{mode="scroll",page=1,position=200}
+        plugin:onTyposcopePreviousLine()
+        assert.are.equal(0, state.position)
+        assert.are.equal(#plugin.lines, plugin.line_index)
+        assert.is_nil(plugin.page_turn_direction)
+    end)
+
+    it("can advance within the last numbered page in scroll mode", function()
+        local plugin, state = newPlugin{mode="scroll",page=10,position=7000}
+        plugin.line_index = #plugin.lines
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(state.max_position, state.position)
+        assert.are.equal(1, plugin.line_index)
+    end)
+
+    it("keeps the line at both scroll limits", function()
+        for _, direction in ipairs({-1, 1}) do
+            local plugin, state = newPlugin{mode="scroll",position=direction == 1 and 7200 or 0}
+            local old_index = direction == 1 and #plugin.lines or 1
+            plugin.line_index = old_index
+            plugin:moveLine(direction)
+            assert.are.equal(old_index, plugin.line_index)
+            assert.is_nil(plugin.page_turn_direction)
+        end
+    end)
+
+    it("uses internal pages when spreads have shared displayed page numbers", function()
+        local plugin, state = newPlugin()
+        state.external_page = 1
+        plugin.line_index = #plugin.lines
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(1, plugin.line_index)
+        assert.are.equal(3, state.page)
+    end)
+
+    it("tolerates closing the document during an end-of-book action", function()
+        local plugin, state = newPlugin()
+        state.close_on_turn = true
+        plugin.line_index = #plugin.lines
+        assert.is_true(plugin:onTyposcopeNextLine())
+        assert.is_false(plugin.is_enabled)
+        assert.is_nil(plugin.page_turn_direction)
+        assert.are.same({}, state.dirty)
+    end)
+end)
+
+describe("two-page EPUB spreads", function()
+    local boxes = {
+        {x=20,y=100,w=240,h=20}, {x=320,y=100,w=240,h=20},
+        {x=20,y=130,w=240,h=20}, {x=320,y=130,w=240,h=20},
+    }
+
+    it("reads all left-page lines before the right page and can step back across the gutter", function()
+        local plugin, state = newPlugin{visible_pages=2,boxes=boxes}
+        assert.are.equal(4, #plugin.lines)
+        assert.are.same({20,20,320,320}, {plugin.lines[1].x,plugin.lines[2].x,plugin.lines[3].x,plugin.lines[4].x})
+        plugin:onTyposcopeNextLine()
+        state.dirty = {}
+        plugin:onTyposcopeNextLine()
+        assert.are.same({x=300,y=97,w=300,h=26}, plugin:getSlot(plugin:getViewport()))
+        assert.are.same({}, state.events)
+        assert.are.same({
+            {widget=plugin.view.dialog,mode="flashui",region={x=300,y=97,w=300,h=26}},
+            {widget=plugin.view.dialog,mode="flashui",region={x=0,y=127,w=300,h=26}},
+        }, state.dirty)
+        plugin:onTyposcopePreviousLine()
+        assert.are.same({x=0,y=127,w=300,h=26}, plugin:getSlot(plugin:getViewport()))
+    end)
+
+    it("covers the other page at the active line's height", function()
+        local plugin = newPlugin{visible_pages=2,boxes=boxes}
+        assert.are.same({
+            {x=0,y=0,w=600,h=97}, {x=0,y=123,w=600,h=677},
+            {x=300,y=97,w=300,h=26},
+        }, paint(plugin))
+    end)
+
+    it("waits until the last right-page line before turning the spread", function()
+        local plugin, state = newPlugin{visible_pages=2,boxes=boxes}
+        for _ = 1, 3 do plugin:onTyposcopeNextLine() end
+        assert.are.same({}, state.events)
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(4, state.page)
+        assert.are.equal(1, plugin.line_index)
+        plugin:onTyposcopePreviousLine()
+        assert.are.equal(2, state.page)
+        assert.are.equal(4, plugin.line_index)
+    end)
+
+    it("keeps the last line when a final spread cannot advance", function()
+        local plugin, state = newPlugin{visible_pages=2,boxes=boxes}
+        plugin.line_index = #plugin.lines
+        plugin.ui.handleEvent = function() plugin:onPageUpdate() end
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(4, plugin.line_index)
+        assert.is_nil(plugin.page_turn_direction)
+    end)
+
+    it("rebuilds column widths after resizing", function()
+        local plugin, state = newPlugin{visible_pages=2,boxes=boxes}
+        state.width = 601
         plugin:onScreenResize()
-        assert.are.equal(2, registered_count)
+        plugin.line_index = 3
+        assert.are.equal(301, plugin:getSlot(plugin:getViewport()).w)
+    end)
+end)
+
+describe("tap controls", function()
+    it("moves lines while enabled and falls through while disabled", function()
+        local plugin, state = newPlugin()
+        assert.is_true(state.zones.typoscope_tap_forward.handler())
+        assert.are.equal(2, plugin.line_index)
+        assert.is_true(state.zones.typoscope_tap_backward.handler())
+        assert.are.equal(1, plugin.line_index)
+        plugin.is_enabled = false
+        assert.is_nil(state.zones.typoscope_tap_forward.handler())
+        assert.is_nil(state.zones.typoscope_tap_backward.handler())
+    end)
+
+    it("respects KOReader's setting to disable page-turn taps", function()
+        local plugin, state = newPlugin()
+        state.disable_taps = true
+        assert.is_nil(state.zones.typoscope_tap_forward.handler())
+        assert.are.equal(1, plugin.line_index)
+        assert.is_true(plugin:onTyposcopeNextLine()) -- explicitly assigned action still works
+    end)
+
+    it("follows reading-order and zone-layout changes through the core setup path", function()
+        local plugin, state = newPlugin()
+        state.forward_zone = {ratio_x=0,ratio_y=0,ratio_w=.25,ratio_h=1}
+        state.backward_zone = {ratio_x=.25,ratio_y=0,ratio_w=.75,ratio_h=1}
+        plugin.view:setupTouchZones()
+        assert.are.same(state.zones.tap_forward.screen_zone,state.zones.typoscope_tap_forward.screen_zone)
+        assert.are.same(state.zones.tap_backward.screen_zone,state.zones.typoscope_tap_backward.screen_zone)
+        state.forward_zone = {ratio_x=0,ratio_y=.3,ratio_w=1,ratio_h=.7}
+        plugin.view:setupTouchZones()
+        assert.are.same(state.zones.tap_forward.screen_zone,state.zones.typoscope_tap_forward.screen_zone)
+        assert.are.equal(2, state.core_setups)
+        assert.is_true(state.zones.typoscope_tap_forward.handler())
+        assert.are.equal(2, plugin.line_index)
+    end)
+
+    it("does not stack hooks on repeated initialization and restores core setup at close", function()
+        local plugin, state = newPlugin()
+        local original = plugin.original_touch_setup
+        plugin:onReaderReady()
+        plugin.view:setupTouchZones()
+        assert.are.equal(1, state.core_setups)
+        plugin:onCloseDocument()
+        assert.are.equal(original, plugin.ui.rolling.setupTouchZones)
+        assert.is_nil(state.zones.typoscope_tap_forward)
+        assert.is_nil(state.zones.typoscope_tap_backward)
+        assert.is_true(state.settings.enabled)
+    end)
+
+    it("does not install touch controls on non-touch devices", function()
+        local plugin, state = newPlugin{touch=false}
+        assert.are.same({}, state.zones)
+        assert.is_nil(plugin.touch_setup_wrapper)
+        plugin:onCloseDocument()
     end)
 end)

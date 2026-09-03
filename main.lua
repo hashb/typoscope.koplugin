@@ -10,13 +10,9 @@ local UIManager = require("ui/uimanager")
 local Widget = require("ui/widget/widget")
 local _ = require("gettext")
 
-local Geometry
-local ok, mod = pcall(require, "plugins/typoscope.koplugin/geometry")
-if ok and mod then
-    Geometry = mod
-else
-    Geometry = require("geometry")
-end
+-- Resolve our helper relative to this file, including in extra plugin paths.
+local plugin_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+local Geometry = dofile(plugin_dir .. "geometry.lua")
 
 local function scaleBySize(size)
     if Screen and Screen.scaleBySize then
@@ -33,19 +29,17 @@ local Typoscope = Widget:extend{
     flash_on_line_change = true,
     line_index = 1,
     line_padding = 3,
-    manual_height = 42,
-    manual_center = 0.35,
     lines = nil,
 }
 
 function Typoscope:init()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/typoscope.lua")
-    self.is_enabled = self.settings:isTrue("enabled")
+    self.is_supported = self:isSupportedDocument()
+    self.is_enabled = self.is_supported and self.settings:isTrue("enabled")
+    self.lines = {}
     self.leave_image_pages_unmasked = self.settings:isTrue("leave_image_pages_unmasked")
     self.flash_on_line_change = self.settings:nilOrTrue("flash_on_line_change")
     self.line_padding = self.settings:readSetting("line_padding") or scaleBySize(self.line_padding)
-    self.manual_height = self.settings:readSetting("manual_height") or scaleBySize(self.manual_height)
-    self.manual_center = self.settings:readSetting("manual_center") or self.manual_center
     self:registerActions()
 end
 
@@ -63,15 +57,33 @@ end
 
 Typoscope.onDispatcherRegisterActions = Typoscope.registerActions
 
+function Typoscope:isSupportedDocument()
+    local document = self.ui and self.ui.document
+    return self.ui and self.ui.rolling ~= nil and document ~= nil
+        and type(document.file) == "string" and document.file:lower():match("%.epub$") ~= nil
+end
+
 function Typoscope:onReaderReady()
+    if not self.is_supported then return end
     self.ui.menu:registerToMainMenu(self)
     self.view:registerViewModule("typoscope", self)
     self:refreshLines(true)
+    if Device:isTouchDevice() and not self.original_touch_setup then
+        -- Reading direction and tap-zone settings rebuild the rolling controller's
+        -- zones directly, without a layout event. Follow every such rebuild.
+        local rolling = self.ui.rolling
+        self.original_touch_setup = rolling.setupTouchZones
+        self.touch_setup_wrapper = function(controller, ...)
+            self.original_touch_setup(controller, ...)
+            self:setupTouchZones()
+        end
+        rolling.setupTouchZones = self.touch_setup_wrapper
+    end
     self:setupTouchZones()
 end
 
 function Typoscope:setupTouchZones()
-    if not Device:isTouchDevice() then return end
+    if not self.is_supported or not Device:isTouchDevice() then return end
 
     local forward_zone, backward_zone = self.view:getTapZones()
     self.ui:registerTouchZones({
@@ -81,7 +93,9 @@ function Typoscope:setupTouchZones()
             screen_zone = forward_zone,
             overrides = { "tap_forward" },
             handler = function()
-                if self.is_enabled then return self:onTyposcopeNextLine() end
+                if self.is_enabled and G_reader_settings:nilOrFalse("page_turns_disable_tap") then
+                    return self:onTyposcopeNextLine()
+                end
             end,
         },
         {
@@ -90,43 +104,68 @@ function Typoscope:setupTouchZones()
             screen_zone = backward_zone,
             overrides = { "tap_backward" },
             handler = function()
-                if self.is_enabled then return self:onTyposcopePreviousLine() end
+                if self.is_enabled and G_reader_settings:nilOrFalse("page_turns_disable_tap") then
+                    return self:onTyposcopePreviousLine()
+                end
             end,
         },
     })
 end
 
 function Typoscope:getViewport()
-    local area = self.view and self.view.visible_area
-    if area and area.w > 0 and area.h > 0 then
-        return { x = area.x, y = area.y, w = area.w, h = area.h }
-    end
-    return { x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
+    -- CRe's text boxes are already in screen coordinates. Keep the footer visible.
+    local height = Screen:getHeight()
+    if self.view.footer_visible then height = height - self.view.footer:getHeight() end
+    return { x = 0, y = 0, w = Screen:getWidth(), h = math.max(0, height) }
+end
+
+function Typoscope:getPageAreas(viewport)
+    local document = self.ui.document
+    local count = document:getVisiblePageCount()
+    if self.view.view_mode == "scroll" or count == 1 then return { viewport } end
+
+    -- CRe draws the current page on the left and the next on the right.
+    -- Split at the screen midpoint, not getPageOffsetX(): its rectangles can
+    -- overlap in the gutter when CRe adjusts the inner margins.
+    local width = math.floor(viewport.w / 2)
+    return {
+        { x = viewport.x, y = viewport.y, w = width, h = viewport.h },
+        { x = viewport.x + width, y = viewport.y, w = viewport.w - width, h = viewport.h },
+    }
+end
+
+function Typoscope:getLocation()
+    if not self.is_supported or not self.ui.document then return end
+    if self.view.view_mode == "scroll" then return self.ui.document:getCurrentPos() end
+    return self.ui.document:getCurrentPage(true)
 end
 
 function Typoscope:refreshLines(reset)
     if reset then self.line_index = 1 end
     self.lines = {}
-    if not self.is_enabled or not self.ui or not self.ui.rolling then return end
+    self.location = self:getLocation()
+    if not self.is_supported or not self.is_enabled or not self.ui.document then return end
 
     local viewport = self:getViewport()
     local ok, result = pcall(self.ui.document.getTextFromPositions, self.ui.document,
         { x = viewport.x, y = viewport.y },
         { x = viewport.x + viewport.w, y = viewport.y + viewport.h }, true)
-    if ok and result and result.pos0 and result.pos1
-            and self.ui.document.getScreenBoxesFromPositions then
-        local boxes_ok, boxes = pcall(self.ui.document.getScreenBoxesFromPositions,
-            self.ui.document, result.pos0, result.pos1, true)
-        if boxes_ok then self.lines = Geometry.normaliseLines(boxes, viewport) end
+    -- getTextFromPositions already supplies screen boxes; no second extraction
+    -- is needed. An empty/failed extraction leaves the page unmasked.
+    if ok and result and type(result.sboxes) == "table" then
+        for _, area in ipairs(self:getPageAreas(viewport)) do
+            for _, line in ipairs(Geometry.normaliseLines(result.sboxes, area)) do
+                line.area = area
+                self.lines[#self.lines + 1] = line
+            end
+        end
     end
-    self.line_index = math.max(1, math.min(self.line_index, math.max(1, #self.lines)))
+    self.line_index = math.max(1, math.min(self.line_index, #self.lines))
 end
 
 function Typoscope:getSlot(viewport)
-    if #self.lines > 0 then
-        return Geometry.slotForLine(viewport, self.lines[self.line_index], self.line_padding)
-    end
-    return Geometry.manualSlot(viewport, self.manual_center, self.manual_height)
+    local line = self.lines[self.line_index]
+    if line then return Geometry.slotForLine(line.area or viewport, line, self.line_padding) end
 end
 
 function Typoscope:pageHasImages()
@@ -136,10 +175,11 @@ function Typoscope:pageHasImages()
 end
 
 function Typoscope:paintTo(bb, x, y)
-    if not self.is_enabled then return end
+    if not self.is_supported or not self.is_enabled then return end
     if self.leave_image_pages_unmasked and self:pageHasImages() then return end
     local viewport = self:getViewport()
     local slot = self:getSlot(viewport)
+    if not slot then return end
     for _, mask in ipairs(Geometry.masks(viewport, slot)) do
         if mask.w > 0 and mask.h > 0 then
             bb:paintRect(x + mask.x, y + mask.y, mask.w, mask.h, Blitbuffer.COLOR_BLACK)
@@ -155,6 +195,7 @@ function Typoscope:redrawSlotChange(viewport, old_slot)
     if not self.view or not self.view.dialog then return end
     if self.leave_image_pages_unmasked and self:pageHasImages() then return end
     local new_slot = self:getSlot(viewport)
+    if not old_slot or not new_slot then return end
     local refresh_mode = self.flash_on_line_change and "flashui" or "partial"
     for _, region in ipairs(Geometry.slotChanges(viewport, old_slot, new_slot)) do
         -- Clean residual text when covering or exposing a strip.
@@ -164,149 +205,88 @@ function Typoscope:redrawSlotChange(viewport, old_slot)
 end
 
 function Typoscope:setEnabled(enabled)
+    if not self.is_supported then return false end
     self.is_enabled = enabled
-    self.show_last_line_after_page_turn = nil
+    self.page_turn_direction = nil
     self.settings:saveSetting("enabled", enabled)
     self:refreshLines(true)
     self:redraw()
 end
 
 function Typoscope:onTyposcopeToggle()
+    if not self.is_supported then return false end
     self:setEnabled(not self.is_enabled)
     return true
 end
 
-function Typoscope:onTyposcopeNextLine()
-    if not self.is_enabled then return false end
+function Typoscope:turnPage(direction)
+    -- Let KOReader clamp the destination and handle hidden flows, scroll limits
+    -- and end-of-book actions. Page numbers are not scroll-position boundaries.
+    self.page_turn_direction = direction
+    self.ui:handleEvent(Event:new("GotoViewRel", direction))
+    self:onPageUpdate()
+    self.page_turn_direction = nil
+    if self.is_supported then self:redraw() end
+    return true
+end
+
+function Typoscope:moveLine(direction)
+    if not self.is_supported or not self.is_enabled then return false end
+    if #self.lines == 0 or (self.leave_image_pages_unmasked and self:pageHasImages()) then
+        return self:turnPage(direction)
+    end
+    local next_index = self.line_index + direction
+    if next_index < 1 or next_index > #self.lines then return self:turnPage(direction) end
     local viewport = self:getViewport()
     local old_slot = self:getSlot(viewport)
-    local page_turn = false
-    self.show_last_line_after_page_turn = nil
-    if #self.lines > 0 then
-        if self.line_index < #self.lines then
-            self.line_index = self.line_index + 1
-        else
-            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            local total_pages = self.ui and self.ui.document and self.ui.document.getPageCount and self.ui.document:getPageCount()
-            if cur_page and total_pages and cur_page >= total_pages then
-                return true
-            end
-            self.line_index = 1
-            page_turn = true
-            self.ui:handleEvent(Event:new("GotoViewRel", 1))
-        end
-    else
-        local min_center = (self.manual_height / 2) / viewport.h
-        local max_center = 1 - min_center
-        local step = self.manual_height / viewport.h
-        if self.manual_center + step > max_center then
-            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            local total_pages = self.ui and self.ui.document and self.ui.document.getPageCount and self.ui.document:getPageCount()
-            if cur_page and total_pages and cur_page >= total_pages then
-                self.manual_center = max_center
-                self.settings:saveSetting("manual_center", self.manual_center)
-                self:redrawSlotChange(viewport, old_slot)
-                return true
-            end
-            self.manual_center = min_center
-            page_turn = true
-            self.ui:handleEvent(Event:new("GotoViewRel", 1))
-        else
-            self.manual_center = self.manual_center + step
-        end
-        self.settings:saveSetting("manual_center", self.manual_center)
-    end
-    if page_turn then
-        self:redraw()
-    else
-        self:redrawSlotChange(viewport, old_slot)
-    end
+    self.line_index = next_index
+    self:redrawSlotChange(viewport, old_slot)
     return true
+end
+
+function Typoscope:onTyposcopeNextLine()
+    return self:moveLine(1)
 end
 
 function Typoscope:onTyposcopePreviousLine()
-    if not self.is_enabled then return false end
-    local viewport = self:getViewport()
-    local old_slot = self:getSlot(viewport)
-    local page_turn = false
-    if #self.lines > 0 then
-        if self.line_index > 1 then
-            self.line_index = self.line_index - 1
-        else
-            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            if cur_page and cur_page <= 1 then
-                return true
-            end
-            self.show_last_line_after_page_turn = true
-            page_turn = true
-            self.ui:handleEvent(Event:new("GotoViewRel", -1))
-            local new_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            if new_page and new_page == cur_page then
-                self.show_last_line_after_page_turn = nil
-            end
-        end
-    else
-        local min_center = (self.manual_height / 2) / viewport.h
-        local max_center = 1 - min_center
-        local step = self.manual_height / viewport.h
-        if self.manual_center - step < min_center then
-            local cur_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            if cur_page and cur_page <= 1 then
-                self.manual_center = min_center
-                self.settings:saveSetting("manual_center", self.manual_center)
-                self:redrawSlotChange(viewport, old_slot)
-                return true
-            end
-            self.show_last_line_after_page_turn = true
-            self.manual_center = max_center
-            page_turn = true
-            self.ui:handleEvent(Event:new("GotoViewRel", -1))
-            local new_page = self.ui and self.ui.document and self.ui.document.getCurrentPage and self.ui.document:getCurrentPage()
-            if new_page and new_page == cur_page then
-                self.show_last_line_after_page_turn = nil
-            end
-        else
-            self.manual_center = self.manual_center - step
-        end
-        self.settings:saveSetting("manual_center", self.manual_center)
-    end
-    if page_turn then
-        self:redraw()
-    else
-        self:redrawSlotChange(viewport, old_slot)
-    end
-    return true
+    return self:moveLine(-1)
 end
 
 function Typoscope:onPageUpdate()
-    self:refreshLines(true)
-    local viewport = self:getViewport()
-    local min_center = (self.manual_height / 2) / viewport.h
-    local max_center = 1 - min_center
-    if self.show_last_line_after_page_turn then
-        self.show_last_line_after_page_turn = nil
-        if #self.lines > 0 then
-            self.line_index = math.max(1, #self.lines)
-        else
-            self.manual_center = max_center
-            self.settings:saveSetting("manual_center", self.manual_center)
-        end
-    else
-        if #self.lines == 0 then
-            self.manual_center = min_center
-            self.settings:saveSetting("manual_center", self.manual_center)
-        end
+    if not self.is_supported or not self.ui.document then return end
+    local changed = self:getLocation() ~= self.location
+    self:refreshLines(changed)
+    if changed and self.page_turn_direction == -1 then
+        self.line_index = math.max(1, #self.lines)
     end
 end
 
 Typoscope.onPosUpdate = Typoscope.onPageUpdate
 
+function Typoscope:onCloseDocument()
+    self.is_enabled = false
+    self.is_supported = false
+    self.page_turn_direction = nil
+    local rolling = self.ui.rolling
+    if self.touch_setup_wrapper and rolling.setupTouchZones == self.touch_setup_wrapper then
+        rolling.setupTouchZones = self.original_touch_setup
+    end
+    if self.touch_setup_wrapper then
+        self.ui:unRegisterTouchZones({
+            { id = "typoscope_tap_forward", overrides = { "tap_forward" } },
+            { id = "typoscope_tap_backward", overrides = { "tap_backward" } },
+        })
+    end
+end
+
 function Typoscope:resetLayout()
+    if not self.is_supported then return end
     self:refreshLines(false)
     self:setupTouchZones()
 end
 
 function Typoscope:onScreenResize()
+    if not self.is_supported then return end
     self:setupTouchZones()
     self:refreshLines(false)
     self:redraw()
@@ -338,24 +318,6 @@ function Typoscope:addToMainMenu(menu_items)
                 callback = function()
                     self.flash_on_line_change = not self.flash_on_line_change
                     self.settings:saveSetting("flash_on_line_change", self.flash_on_line_change)
-                end,
-            },
-            {
-                text = _("Reading slot height"),
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text = _("Reading slot height"),
-                        value = self.manual_height,
-                        value_min = 10,
-                        value_max = 500,
-                        value_step = 2,
-                        callback = function(spin)
-                            self.manual_height = spin.value
-                            self.settings:saveSetting("manual_height", self.manual_height)
-                            self:redraw()
-                        end,
-                    })
                 end,
             },
             {

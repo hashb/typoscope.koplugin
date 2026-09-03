@@ -1,6 +1,5 @@
-package.path = "./?.lua;" .. package.path
-
-local Geometry = require("geometry")
+local spec_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+local Geometry = dofile(spec_dir .. "../geometry.lua")
 
 describe("typoscope geometry", function()
     local viewport = { x = 10, y = 20, w = 600, h = 800 }
@@ -14,13 +13,6 @@ describe("typoscope geometry", function()
     it("adds padding to a detected line and clips it", function()
         assert.are.same({ x = 10, y = 20, w = 600, h = 15 },
             Geometry.slotForLine(viewport, { x = 50, y = 18, w = 200, h = 14 }, 3))
-    end)
-
-    it("clamps a manual slot to the viewport", function()
-        assert.are.same({ x = 10, y = 20, w = 600, h = 50 },
-            Geometry.manualSlot(viewport, 0, 50))
-        assert.are.same({ x = 10, y = 770, w = 600, h = 50 },
-            Geometry.manualSlot(viewport, 1, 50))
     end)
 
     it("leaves the gap between separated slots out of refresh regions", function()
@@ -64,6 +56,51 @@ describe("typoscope geometry", function()
             { x = 10, y = 100, w = 600, h = 6 },
             { x = 10, y = 120, w = 600, h = 6 },
         }, Geometry.slotChanges(viewport, { y = 100.5, h = 20 }, { y = 105.5, h = 20 }))
+    end)
+
+    it("masks and refreshes exactly the changed pixels for rectangular slots", function()
+        local area = { x = 0, y = 0, w = 6, h = 8 }
+        local slots = {
+            {x=0,y=0,w=6,h=8}, {x=0,y=1,w=3,h=2}, {x=3,y=1,w=3,h=2},
+            {x=1,y=2,w=4,h=4}, {x=2,y=3,w=1,h=2}, {x=-2,y=-1,w=5,h=4},
+            {x=4,y=6,w=4,h=5}, {x=9,y=10,w=3,h=2}, {x=2,y=2,w=0,h=3},
+        }
+        local function contains(rect, x, y)
+            return x >= rect.x and x < rect.x + rect.w and y >= rect.y and y < rect.y + rect.h
+        end
+        local function countAt(rects, x, y)
+            local count = 0
+            for _, rect in ipairs(rects) do
+                assert.is_true(rect.x >= 0 and rect.x + rect.w <= area.w)
+                assert.is_true(rect.y >= 0 and rect.y + rect.h <= area.h)
+                if contains(rect, x, y) then count = count + 1 end
+            end
+            return count
+        end
+        for _, old_slot in ipairs(slots) do
+            local masks = Geometry.masks(area, old_slot)
+            for _, new_slot in ipairs(slots) do
+                local changes = Geometry.slotChanges(area, old_slot, new_slot)
+                for y = 0, area.h - 1 do
+                    for x = 0, area.w - 1 do
+                        local old_visible, new_visible = contains(old_slot, x, y), contains(new_slot, x, y)
+                        assert.are.equal(old_visible and 0 or 1, countAt(masks, x, y))
+                        assert.are.equal(old_visible ~= new_visible and 1 or 0, countAt(changes, x, y))
+                    end
+                end
+            end
+        end
+    end)
+
+    it("does not merge or duplicate lines across page areas", function()
+        local boxes = {
+            {x=20,y=100,w=240,h=20}, {x=320,y=100,w=240,h=20},
+            {x=20,y=130,w=240,h=20}, {x=320,y=130,w=240,h=20},
+        }
+        local left = Geometry.normaliseLines(boxes, {x=0,y=0,w=300,h=800})
+        local right = Geometry.normaliseLines(boxes, {x=300,y=0,w=300,h=800})
+        assert.are.same({boxes[1], boxes[3]}, left)
+        assert.are.same({boxes[2], boxes[4]}, right)
     end)
 
     it("sorts and removes offscreen or empty lines", function()
