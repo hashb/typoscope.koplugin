@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Typoscope for KOReader — One line in focus</title>
-  <meta name="description" content="A reading mask for KOReader that keeps one line visible. Tap to move through your book and choose a light or dark mask. Watch the demo and install the plugin.">
+  <meta name="description" content="Typoscope is a reading mask for KOReader. It keeps one line visible. Touch the screen to move through the book. Select a light or a dark mask. Watch the demo and install the plugin.">
   <meta name="author" content="Chenna Kautilya">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="theme-color" content="#fffff8">
@@ -16,7 +16,7 @@
   <meta property="og:site_name" content="Typoscope">
   <meta property="og:locale" content="en_US">
   <meta property="og:title" content="Typoscope for KOReader — One line in focus">
-  <meta property="og:description" content="Keep one line visible while you read. A light or dark reading mask for KOReader, with a short demo and installation instructions.">
+  <meta property="og:description" content="Keep one line visible when you read. Typoscope is a light or dark reading mask for KOReader. The page has a short demo and installation instructions.">
   <meta property="og:url" content="https://typoscope.chenna.me/">
   <meta property="og:image" content="https://typoscope.chenna.me/assets/images/social-card.png">
   <meta property="og:image:type" content="image/png">
@@ -25,7 +25,7 @@
   <meta property="og:image:alt" content="Typoscope for KOReader in ET Book lettering above a light slit through a dark reading mask.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Typoscope for KOReader — One line in focus">
-  <meta name="twitter:description" content="Keep one line visible while you read. Watch the demo, choose a light or dark mask, and install Typoscope for KOReader.">
+  <meta name="twitter:description" content="Keep one line visible when you read. Watch the demo. Select a light or a dark mask. Install Typoscope for KOReader.">
   <meta name="twitter:image" content="https://typoscope.chenna.me/assets/images/social-card.png">
   <meta name="twitter:image:alt" content="Typoscope for KOReader in ET Book lettering above a light slit through a dark reading mask.">
 
@@ -39,7 +39,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "Typoscope for KOReader",
-    "description": "A KOReader plugin that covers the page around the current reading line with a light or dark mask.",
+    "description": "A KOReader plugin. It covers the page around the selected line with a light or a dark mask.",
     "url": "https://typoscope.chenna.me/",
     "codeRepository": "https://github.com/hashb/typoscope.koplugin",
     "programmingLanguage": "Lua",
@@ -60,7 +60,7 @@
       </header>
 
       <section class="introduction" aria-label="About Typoscope">
-        <p>A reading mask that keeps one line in view. Like placing two pieces of paper over a printed page, Typoscope covers the text above and below the line you’re reading.</p>
+        <p>Typoscope is a reading mask that keeps one line visible. It covers the text above and below the line that you read. The effect is the same as two sheets of paper on a printed page.</p>
         <nav aria-label="Project links">
           <a href="#installation">Install the plugin</a>
           <a href="https://github.com/hashb/typoscope.koplugin">Source on GitHub</a>
@@ -77,9 +77,9 @@
           </video>
           <figcaption id="demo-caption">
             <p class="figure-label">A short demonstration</p>
-            <p>Enable the mask, tap through a few lines, then switch from light to dark.</p>
-            <p>Each forward tap moves to the next line. A backward tap returns to the previous one.</p>
-            <p class="video-meta">42 seconds · narrated, with text overlays</p>
+            <p>The video shows these steps: set the mask on, move through some lines, and change the mask from light to dark.</p>
+            <p>Each forward touch moves the mask to the next line. Each backward touch moves the mask to the previous line.</p>
+            <p class="video-meta">42 seconds · with narration and text overlays</p>
             <details class="transcript">
               <summary>Read the video transcript</summary>
               <p>Start with a book open. Swipe down to open the menu. Choose Tools, then More tools. Open Typoscope and enable the reading mask.</p>
@@ -94,25 +94,28 @@
       <section id="installation" class="reading-section">
         <h2>Installation</h2>
         <ol>
-          <li>Download and extract the install ZIP from the <a href="https://github.com/hashb/typoscope.koplugin/releases/latest">latest release</a>.</li>
-          <li>Copy the plugin folder into KOReader’s <code>plugins</code> directory. Name the folder <code>typoscope.koplugin</code>.</li>
-          <li>Restart KOReader and open a book. In the menu, choose <strong>Tools → More tools → Typoscope reading mask → Enable mask</strong>.</li>
+          <li>Download the install ZIP file from the <a href="https://github.com/hashb/typoscope.koplugin/releases/latest">latest release</a>.</li>
+          <li>Extract the plugin folder from the ZIP file.</li>
+          <li>Put the plugin folder in the <code>plugins</code> directory of KOReader. Make sure that the folder name is <code>typoscope.koplugin</code>.</li>
+          <li>Start KOReader again.</li>
+          <li>Open a book.</li>
+          <li>In the menu, select <strong>Tools → More tools → Typoscope reading mask → Enable mask</strong>.</li>
         </ol>
         <p class="path"><code>koreader/plugins/typoscope.koplugin/</code></p>
-        <p class="small-note">Depending on your KOReader version, Typoscope may appear directly under Tools. Before reading, assign <strong>Toggle typoscope</strong> to an easy-to-remember gesture so you can quickly turn the mask off.</p>
+        <p class="small-note">Note: In some KOReader versions, Typoscope is directly under Tools. Before you read, assign <strong>Toggle typoscope</strong> to a gesture that is easy to remember. Then you can set the mask off quickly.</p>
       </section>
 
       <section class="reading-section">
-        <h2>While you read</h2>
-        <p>Tap in your usual page-turn zones to step forward or backward through the lines. At the end of a page, another tap turns the page or scrolls the view.</p>
-        <p>In <strong>Mask color</strong>, choose light or dark. You can also adjust line padding, change the cleaning flash on each step, and leave pages containing images uncovered.</p>
-        <p>The mask works with reflowable books, such as EPUBs, in page and scroll modes. PDF and DjVu documents aren’t supported. The book’s text and colors stay as they are.</p>
+        <h2>When you read</h2>
+        <p>Touch the usual page-turn zones to move forward or backward through the lines. At the end of a page, one more touch turns the page or scrolls the view.</p>
+        <p>In <strong>Mask color</strong>, select light or dark. You can also adjust the line padding. You can set the cleaning flash on or off for each step. You can keep pages that have images fully visible.</p>
+        <p>The mask operates in reflowable books, for example EPUB files, in page mode and in scroll mode. The mask does not operate in PDF and DjVu documents. The text and the colors of the book do not change.</p>
         <p><a href="https://github.com/hashb/typoscope.koplugin#readme">Read the full documentation</a>.</p>
       </section>
 
       <footer class="site-footer">
-        <p>By <a href="https://github.com/hashb">Chenna Kautilya</a>. <a href="https://github.com/hashb/typoscope.koplugin/blob/main/LICENSE">MIT licensed</a>.</p>
-        <p>Set in ET Book with <a href="https://edwardtufte.github.io/tufte-css/">Tufte CSS</a>.</p>
+        <p>Made by <a href="https://github.com/hashb">Chenna Kautilya</a>. Released under the <a href="https://github.com/hashb/typoscope.koplugin/blob/main/LICENSE">MIT license</a>.</p>
+        <p>The page uses the ET Book font and <a href="https://edwardtufte.github.io/tufte-css/">Tufte CSS</a>.</p>
       </footer>
     </article>
   </main>
