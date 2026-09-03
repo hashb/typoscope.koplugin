@@ -1,8 +1,9 @@
 # Typoscope for KOReader
 
-Typoscope is a reading-aid plugin for KOReader's reflowable documents. It paints an opaque black
-overlay around the current line, like placing two pieces of black paper over a
-printed page. It does **not** recolor or modify the book's text.
+Typoscope is a reading-aid plugin for KOReader's reflowable documents. It paints an opaque
+overlay around the current line, like placing two pieces of paper over a printed
+page. The overlay is dark by default and can be switched to light. It does
+**not** recolor or modify the book's text.
 
 ## Status and document support
 
@@ -59,6 +60,11 @@ The plugin menu under **Tools → Typoscope reading mask** contains:
 
 - **Enable mask**: Toggle the reading mask on or off.
 - **Flash screen on line change**: Toggle regional e-ink cleaning flashes on line steps.
+  When enabled, toggling the mask or changing its color also flashes the whole
+  screen, since those changes replace large areas.
+- **Mask color**: Choose a **Dark** (black) or **Light** (white) mask. KOReader's
+  night mode inverts the whole screen, so a dark mask appears light in night
+  mode and vice versa, matching the inverted page.
 - **Line padding**: Adjust vertical padding added around detected lines.
 - **Leave pages containing images unmasked**: Keep pages with image content uncovered.
 

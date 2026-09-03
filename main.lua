@@ -27,6 +27,7 @@ local Typoscope = Widget:extend{
     is_enabled = false,
     leave_image_pages_unmasked = false,
     flash_on_line_change = true,
+    mask_color = "dark",
     line_index = 1,
     line_padding = 3,
     lines = nil,
@@ -39,6 +40,7 @@ function Typoscope:init()
     self.lines = {}
     self.leave_image_pages_unmasked = self.settings:isTrue("leave_image_pages_unmasked")
     self.flash_on_line_change = self.settings:nilOrTrue("flash_on_line_change")
+    self.mask_color = self.settings:readSetting("mask_color") == "light" and "light" or "dark"
     self.line_padding = self.settings:readSetting("line_padding") or scaleBySize(self.line_padding)
     self:registerActions()
 end
@@ -191,21 +193,41 @@ function Typoscope:pageHasImages()
     return count and count > 0
 end
 
+function Typoscope:getMaskColor()
+    -- KOReader's night mode inverts everything painted to the screen, so a
+    -- dark mask on a light page becomes a light mask on a dark page.
+    if self.mask_color == "light" then return Blitbuffer.COLOR_WHITE end
+    return Blitbuffer.COLOR_BLACK
+end
+
+function Typoscope:setMaskColor(color)
+    if color ~= "light" then color = "dark" end
+    if color == self.mask_color then return end
+    self.mask_color = color
+    self.settings:saveSetting("mask_color", color)
+    self:redraw(true)
+end
+
 function Typoscope:paintTo(bb, x, y)
     if not self.is_supported or not self.is_enabled then return end
     if self.leave_image_pages_unmasked and self:pageHasImages() then return end
     local viewport = self:getViewport()
     local slot = self:getSlot(viewport)
     if not slot then return end
+    local color = self:getMaskColor()
     for _, mask in ipairs(Geometry.masks(viewport, slot)) do
         if mask.w > 0 and mask.h > 0 then
-            bb:paintRect(x + mask.x, y + mask.y, mask.w, mask.h, Blitbuffer.COLOR_BLACK)
+            bb:paintRect(x + mask.x, y + mask.y, mask.w, mask.h, color)
         end
     end
 end
 
-function Typoscope:redraw()
-    if self.view and self.view.dialog then UIManager:setDirty(self.view.dialog, "partial") end
+-- A whole-screen mask change (toggling it, or changing its color) replaces
+-- large areas; flash them clean on e-ink unless the user opted out of flashes.
+function Typoscope:redraw(whole_mask_changed)
+    if not self.view or not self.view.dialog then return end
+    local mode = (whole_mask_changed and self.flash_on_line_change) and "full" or "partial"
+    UIManager:setDirty(self.view.dialog, mode)
 end
 
 function Typoscope:redrawSlotChange(viewport, old_slot)
@@ -227,7 +249,7 @@ function Typoscope:setEnabled(enabled)
     self.page_turn_direction = nil
     self.settings:saveSetting("enabled", enabled)
     self:refreshLines(true)
-    self:redraw()
+    self:redraw(true)
 end
 
 function Typoscope:onTyposcopeToggle()
@@ -240,10 +262,13 @@ function Typoscope:turnPage(direction)
     -- Let KOReader clamp the destination and handle hidden flows, scroll limits
     -- and end-of-book actions. Page numbers are not scroll-position boundaries.
     self.page_turn_direction = direction
+    local previous_location = self.location
     self.ui:handleEvent(Event:new("GotoViewRel", direction))
     self:onPageUpdate()
     self.page_turn_direction = nil
-    if self.is_supported then self:redraw() end
+    -- KOReader already repaints a changed view; a failed turn at a document
+    -- boundary changes nothing, so do not request a needless refresh.
+    if self.is_supported and self.location ~= previous_location then self:redraw() end
     return true
 end
 
@@ -346,6 +371,23 @@ function Typoscope:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Mask color"),
+                sub_item_table = {
+                    {
+                        text = _("Dark"),
+                        radio = true,
+                        checked_func = function() return self.mask_color == "dark" end,
+                        callback = function() self:setMaskColor("dark") end,
+                    },
+                    {
+                        text = _("Light"),
+                        radio = true,
+                        checked_func = function() return self.mask_color == "light" end,
+                        callback = function() self:setMaskColor("light") end,
+                    },
+                },
+            },
+            {
                 text = _("Line padding"),
                 callback = function()
                     local SpinWidget = require("ui/widget/spinwidget")
@@ -379,5 +421,9 @@ end
 function Typoscope:onFlushSettings()
     self.settings:flush()
 end
+
+-- Also persist on KOReader's periodic and on-close saves, so a crash or
+-- power loss does not lose preference changes made during the session.
+Typoscope.onSaveSettings = Typoscope.onFlushSettings
 
 return Typoscope

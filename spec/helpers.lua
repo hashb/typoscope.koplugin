@@ -24,7 +24,7 @@ function Helpers.newPlugin(options)
         flush = function() state.flushed = true end,
     }
     local stubs = {
-        ["ffi/blitbuffer"] = { COLOR_BLACK = 0 },
+        ["ffi/blitbuffer"] = { COLOR_BLACK = 0, COLOR_WHITE = 255 },
         datastorage = { getSettingsDir = function() return "/tmp" end },
         dispatcher = { registerAction = function() end },
         luasettings = { open = function() return settings end },

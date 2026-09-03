@@ -117,6 +117,74 @@ describe("reflowable document support", function()
         local plugin, state = newPlugin()
         plugin:onFlushSettings()
         assert.is_true(state.flushed)
+        state.flushed = nil
+        plugin:onSaveSettings()
+        assert.is_true(state.flushed)
+    end)
+
+    it("flashes the whole screen when the mask is toggled, unless flashes are disabled", function()
+        local plugin, state = newPlugin()
+        plugin:setEnabled(false)
+        assert.are.same({{widget=plugin.view.dialog, mode="full"}}, state.dirty)
+        state.dirty = {}
+        plugin.flash_on_line_change = false
+        plugin:setEnabled(true)
+        assert.are.same({{widget=plugin.view.dialog, mode="partial"}}, state.dirty)
+    end)
+end)
+
+describe("mask color", function()
+    local function paintColors(plugin)
+        local colors = {}
+        plugin:paintTo({ paintRect = function(_, _, _, _, _, color)
+            colors[color] = (colors[color] or 0) + 1
+        end }, 0, 0)
+        return colors
+    end
+
+    local function colorMenu(state)
+        for _, item in ipairs(state.menu.typoscope.sub_item_table) do
+            if item.text == "Mask color" then return item.sub_item_table end
+        end
+    end
+
+    it("paints a dark mask by default", function()
+        local plugin, state = newPlugin()
+        assert.are.equal("dark", plugin.mask_color)
+        assert.are.same({ [0] = 2 }, paintColors(plugin))
+        local dark, light = colorMenu(state)[1], colorMenu(state)[2]
+        assert.is_true(dark.radio and light.radio)
+        assert.is_true(dark.checked_func())
+        assert.is_false(light.checked_func())
+    end)
+
+    it("switches to a light mask from the menu, saves it, and flashes the screen", function()
+        local plugin, state = newPlugin()
+        colorMenu(state)[2].callback()
+        assert.are.equal("light", plugin.mask_color)
+        assert.are.equal("light", state.settings.mask_color)
+        assert.are.same({ [255] = 2 }, paintColors(plugin))
+        assert.are.same({{widget=plugin.view.dialog, mode="full"}}, state.dirty)
+        assert.is_true(colorMenu(state)[2].checked_func())
+        -- Reselecting the current color changes nothing.
+        colorMenu(state)[2].callback()
+        assert.are.equal(1, #state.dirty)
+        plugin.flash_on_line_change = false
+        colorMenu(state)[1].callback()
+        assert.are.equal("dark", state.settings.mask_color)
+        assert.are.same({widget=plugin.view.dialog, mode="partial"}, state.dirty[2])
+    end)
+
+    it("restores the saved color and falls back to dark for unknown values", function()
+        local plugin = newPlugin()
+        plugin.settings:saveSetting("mask_color", "light")
+        plugin:init()
+        plugin:refreshLines(true)
+        assert.are.equal("light", plugin.mask_color)
+        assert.are.same({ [255] = 2 }, paintColors(plugin))
+        plugin.settings:saveSetting("mask_color", "purple")
+        plugin:init()
+        assert.are.equal("dark", plugin.mask_color)
     end)
 end)
 
@@ -217,7 +285,7 @@ describe("page and scroll navigation", function()
             assert.are.equal(direction == 1 and 1 or #plugin.lines, plugin.line_index)
             assert.are.same({{name="GotoViewRel",direction=direction}}, state.events)
             assert.is_nil(plugin.page_turn_direction)
-            for _, dirty in ipairs(state.dirty) do assert.are.equal("partial", dirty.mode) end
+            assert.are.same({{widget=plugin.view.dialog, mode="partial"}}, state.dirty)
         end
     end)
 
@@ -229,6 +297,8 @@ describe("page and scroll navigation", function()
             plugin:moveLine(direction)
             assert.are.equal(old_index, plugin.line_index)
             assert.is_nil(plugin.page_turn_direction)
+            -- Nothing changed on screen, so no refresh is requested.
+            assert.are.same({}, state.dirty)
             -- A later external forward turn must not inherit a failed backward turn.
             state.page = 5
             plugin:onPageUpdate()
