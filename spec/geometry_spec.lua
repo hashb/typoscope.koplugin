@@ -15,6 +15,25 @@ describe("typoscope geometry", function()
             Geometry.slotForLine(viewport, { x = 50, y = 18, w = 200, h = 14 }, 3))
     end)
 
+    it("extends the visible slot to the unmasked edge while preserving padding", function()
+        local line = { x = 50, y = 120, w = 200, h = 30 }
+        assert.are.same({ x = 10, y = 117, w = 600, h = 703 },
+            Geometry.slotForLine(viewport, line, 3, "top"))
+        assert.are.same({ x = 10, y = 20, w = 600, h = 133 },
+            Geometry.slotForLine(viewport, line, 3, "bottom"))
+        assert.are.same({ x = 10, y = 117, w = 600, h = 36 },
+            Geometry.slotForLine(viewport, line, 3, "both"))
+    end)
+
+    it("clips one-sided slots at page edges, including fully visible pages", function()
+        for _, mode in ipairs({"top", "bottom"}) do
+            assert.are.same(viewport,
+                Geometry.slotForLine(viewport, { y = 18, h = 802 }, 3, mode))
+            assert.are.same({}, Geometry.masks(viewport,
+                Geometry.slotForLine(viewport, { y = 18, h = 802 }, 3, mode)))
+        end
+    end)
+
     it("leaves the gap between separated slots out of refresh regions", function()
         assert.are.same({
             { x = 10, y = 100, w = 600, h = 20 },

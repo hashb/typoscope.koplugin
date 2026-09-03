@@ -21,6 +21,10 @@ local function scaleBySize(size)
     return size
 end
 
+local function normalizeMaskMode(mode)
+    return (mode == "top" or mode == "bottom") and mode or "both"
+end
+
 local Typoscope = Widget:extend{
     name = "typoscope",
     is_doc_only = true,
@@ -28,6 +32,7 @@ local Typoscope = Widget:extend{
     leave_image_pages_unmasked = false,
     flash_on_line_change = true,
     mask_color = "dark",
+    mask_mode = "both",
     line_index = 1,
     line_padding = 3,
     lines = nil,
@@ -41,6 +46,7 @@ function Typoscope:init()
     self.leave_image_pages_unmasked = self.settings:isTrue("leave_image_pages_unmasked")
     self.flash_on_line_change = self.settings:nilOrTrue("flash_on_line_change")
     self.mask_color = self.settings:readSetting("mask_color") == "light" and "light" or "dark"
+    self.mask_mode = normalizeMaskMode(self.settings:readSetting("mask_mode"))
     self.line_padding = self.settings:readSetting("line_padding") or scaleBySize(self.line_padding)
     self:registerActions()
 end
@@ -184,7 +190,7 @@ end
 
 function Typoscope:getSlot(viewport)
     local line = self.lines[self.line_index]
-    if line then return Geometry.slotForLine(line.area or viewport, line, self.line_padding) end
+    if line then return Geometry.slotForLine(line.area or viewport, line, self.line_padding, self.mask_mode) end
 end
 
 function Typoscope:pageHasImages()
@@ -208,6 +214,14 @@ function Typoscope:setMaskColor(color)
     self:redraw(true)
 end
 
+function Typoscope:setMaskMode(mode)
+    mode = normalizeMaskMode(mode)
+    if mode == self.mask_mode then return end
+    self.mask_mode = mode
+    self.settings:saveSetting("mask_mode", mode)
+    self:redraw(true)
+end
+
 function Typoscope:paintTo(bb, x, y)
     if not self.is_supported or not self.is_enabled then return end
     if self.leave_image_pages_unmasked and self:pageHasImages() then return end
@@ -222,7 +236,7 @@ function Typoscope:paintTo(bb, x, y)
     end
 end
 
--- A whole-screen mask change (toggling it, or changing its color) replaces
+-- A whole-screen mask change (toggling it, or changing its color or mode) replaces
 -- large areas; flash them clean on e-ink unless the user opted out of flashes.
 function Typoscope:redraw(whole_mask_changed)
     if not self.view or not self.view.dialog then return end
@@ -384,6 +398,29 @@ function Typoscope:addToMainMenu(menu_items)
                         radio = true,
                         checked_func = function() return self.mask_color == "light" end,
                         callback = function() self:setMaskColor("light") end,
+                    },
+                },
+            },
+            {
+                text = _("Mask mode"),
+                sub_item_table = {
+                    {
+                        text = _("Top only"),
+                        radio = true,
+                        checked_func = function() return self.mask_mode == "top" end,
+                        callback = function() self:setMaskMode("top") end,
+                    },
+                    {
+                        text = _("Bottom only"),
+                        radio = true,
+                        checked_func = function() return self.mask_mode == "bottom" end,
+                        callback = function() self:setMaskMode("bottom") end,
+                    },
+                    {
+                        text = _("Both"),
+                        radio = true,
+                        checked_func = function() return self.mask_mode == "both" end,
+                        callback = function() self:setMaskMode("both") end,
                     },
                 },
             },

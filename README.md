@@ -86,12 +86,17 @@ The plugin menu under **Tools → Typoscope reading mask** contains these items:
 - **Enable mask**: Set the reading mask on or off.
 - **Flash screen on line change**: Set the regional e-ink cleaning flashes on or
   off for line steps. When this option is on, the full screen also flashes if
-  you set the mask on or off. It also flashes if you change the mask color.
+  you set the mask on or off. It also flashes if you change the mask color or
+  mode.
   These changes replace large areas of the screen.
 - **Mask color**: Select a **Dark** (black) mask or a **Light** (white) mask.
   The night mode of KOReader inverts the full screen. In night mode, a dark mask
   shows as light, and a light mask shows as dark. This agrees with the inverted
   page.
+- **Mask mode**: Select **Top only**, **Bottom only**, or **Both**. **Both** is
+  the default. Top only covers the text above the current line. Bottom only
+  covers the text below the current line. In a two-page view, the inactive page
+  stays covered in all modes.
 - **Line padding**: Adjust the vertical space that the plugin adds above and
   below each detected line.
 - **Leave pages containing images unmasked**: Keep the pages that have images

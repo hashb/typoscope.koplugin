@@ -5,10 +5,14 @@ local function clamp(value, low, high)
     return math.max(low, math.min(value, high))
 end
 
-function Geometry.slotForLine(viewport, line, padding)
+function Geometry.slotForLine(viewport, line, padding, mask_mode)
     padding = math.max(0, padding or 0)
     local top = clamp(line.y - padding, viewport.y, viewport.y + viewport.h)
     local bottom = clamp(line.y + line.h + padding, viewport.y, viewport.y + viewport.h)
+    -- Extend the visible slot to the unmasked edge of the active page. Painting
+    -- and refresh calculations then share the same geometry in every mode.
+    if mask_mode == "bottom" then top = viewport.y end
+    if mask_mode == "top" then bottom = viewport.y + viewport.h end
     return { x = viewport.x, y = top, w = viewport.w, h = math.max(0, bottom - top) }
 end
 

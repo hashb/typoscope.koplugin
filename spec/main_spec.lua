@@ -188,6 +188,110 @@ describe("mask color", function()
     end)
 end)
 
+describe("mask mode", function()
+    local function modeMenu(state)
+        for _, item in ipairs(state.menu.typoscope.sub_item_table) do
+            if item.text == "Mask mode" then return item.sub_item_table end
+        end
+    end
+
+    it("defaults to both masks and exposes three mutually exclusive choices", function()
+        local plugin, state = newPlugin()
+        assert.are.equal("both", plugin.mask_mode)
+        assert.are.same({{x=0,y=0,w=600,h=97}, {x=0,y=123,w=600,h=677}}, paint(plugin))
+        local menu = modeMenu(state)
+        assert.are.same({"Top only", "Bottom only", "Both"}, {menu[1].text, menu[2].text, menu[3].text})
+        for index, item in ipairs(menu) do
+            assert.is_true(item.radio)
+            assert.are.equal(index == 3, item.checked_func())
+        end
+    end)
+
+    it("saves menu changes, preserves the line, and respects the flash preference", function()
+        local plugin, state = newPlugin()
+        plugin.line_index = 2
+        local menu = modeMenu(state)
+        for index, mode in ipairs({"top", "bottom", "both"}) do
+            menu[index].callback()
+            assert.are.equal(mode, plugin.mask_mode)
+            assert.are.equal(mode, state.settings.mask_mode)
+            assert.are.equal(2, plugin.line_index)
+            for other_index, item in ipairs(menu) do
+                assert.are.equal(index == other_index, item.checked_func())
+            end
+            assert.are.same({widget=plugin.view.dialog,mode=index == 1 and "full" or "partial"}, state.dirty[index])
+            menu[index].callback() -- Reselecting the current mode changes nothing.
+            assert.are.equal(index, #state.dirty)
+            plugin.flash_on_line_change = false
+        end
+    end)
+
+    it("restores saved modes and falls back to both for unknown values", function()
+        local plugin = newPlugin()
+        for _, mode in ipairs({"top", "bottom", "both", "unknown"}) do
+            plugin.settings:saveSetting("mask_mode", mode)
+            plugin:init()
+            assert.are.equal(mode == "unknown" and "both" or mode, plugin.mask_mode)
+        end
+        plugin:setMaskMode("top")
+        plugin:setMaskMode("unknown")
+        assert.are.equal("both", plugin.mask_mode)
+    end)
+
+    it("paints only the selected side in page and scroll modes, keeping the footer visible", function()
+        for _, view_mode in ipairs({"page", "scroll"}) do
+            local plugin = newPlugin{mode=view_mode}
+            plugin.view.footer_visible = true
+            plugin:refreshLines(true)
+            plugin:setMaskMode("top")
+            assert.are.same({{x=0,y=0,w=600,h=97}}, paint(plugin))
+            plugin:setMaskMode("bottom")
+            assert.are.same({{x=0,y=123,w=600,h=637}}, paint(plugin))
+        end
+    end)
+
+    it("refreshes only the moving mask edge in either direction", function()
+        for _, mode in ipairs({"top", "bottom"}) do
+            local plugin, state = newPlugin()
+            plugin:setMaskMode(mode)
+            for _, method in ipairs({"onTyposcopeNextLine", "onTyposcopePreviousLine"}) do
+                state.dirty = {}
+                assert.is_true(plugin[method](plugin))
+                assert.are.same({{
+                    widget=plugin.view.dialog, mode="flashui",
+                    region={x=0,y=mode == "top" and 97 or 123,w=600,h=25},
+                }}, state.dirty)
+            end
+        end
+    end)
+
+    it("keeps the inactive page covered and refreshes the exposed areas when crossing a spread", function()
+        for _, mode in ipairs({"top", "bottom"}) do
+            local plugin, state = newPlugin{visible_pages=2,boxes={
+                {x=20,y=100,w=240,h=20}, {x=320,y=100,w=240,h=20},
+            }}
+            plugin:setMaskMode(mode)
+            local edge = mode == "top" and 97 or 123
+            local mask = mode == "top" and {x=0,y=0,w=600,h=edge}
+                or {x=0,y=edge,w=600,h=800-edge}
+            local visible_y = mode == "top" and edge or 0
+            local visible_h = mode == "top" and 800-edge or edge
+            assert.are.same({mask, {x=300,y=visible_y,w=300,h=visible_h}}, paint(plugin))
+            for _, method in ipairs({"onTyposcopeNextLine", "onTyposcopePreviousLine"}) do
+                state.dirty = {}
+                plugin[method](plugin)
+                assert.are.same({
+                    {widget=plugin.view.dialog,mode="flashui",region={x=0,y=visible_y,w=300,h=visible_h}},
+                    {widget=plugin.view.dialog,mode="flashui",region={x=300,y=visible_y,w=300,h=visible_h}},
+                }, state.dirty)
+                local inactive_x = plugin.line_index == 1 and 300 or 0
+                assert.are.same({mask, {x=inactive_x,y=visible_y,w=300,h=visible_h}}, paint(plugin))
+            end
+            assert.are.same({}, state.events)
+        end
+    end)
+end)
+
 describe("footer visibility changes", function()
     local boxes = {
         {x=20,y=700,w=240,h=20}, {x=20,y=735,w=240,h=20},
