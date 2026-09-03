@@ -116,6 +116,7 @@ function Helpers.newPlugin(options)
     -- KOReader's tap-zone menu and reading-order action both use this path.
     function view:setupTouchZones() ui.rolling:setupTouchZones() end
     if not options.paging then ui.rolling = rolling end
+    if options.missing_document_method then ui.document[options.missing_document_method] = nil end
     plugin = setmetatable({ ui = ui, view = view }, { __index = Typoscope })
     function ui:handleEvent(event)
         state.events[#state.events + 1] = event

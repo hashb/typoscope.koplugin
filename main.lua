@@ -59,8 +59,14 @@ Typoscope.onDispatcherRegisterActions = Typoscope.registerActions
 
 function Typoscope:isSupportedDocument()
     local document = self.ui and self.ui.document
-    return self.ui and self.ui.rolling ~= nil and document ~= nil
-        and type(document.file) == "string" and document.file:lower():match("%.epub$") ~= nil
+    if not self.ui or not self.ui.rolling or not document then return false end
+    -- CRe supplies the same screen-text API for EPUB, MOBI and other reflowable
+    -- formats. Require that API rather than maintaining an extension allowlist.
+    return type(document.getTextFromPositions) == "function"
+        and type(document.getCurrentPage) == "function"
+        and type(document.getCurrentPos) == "function"
+        and type(document.getVisiblePageCount) == "function"
+        and type(document.getPageCount) == "function"
 end
 
 function Typoscope:onReaderReady()

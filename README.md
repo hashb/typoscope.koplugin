@@ -1,14 +1,17 @@
 # Typoscope for KOReader
 
-Typoscope is an EPUB reading-aid plugin for KOReader. It paints an opaque black
+Typoscope is a reading-aid plugin for KOReader's reflowable documents. It paints an opaque black
 overlay around the current line, like placing two pieces of black paper over a
 printed page. It does **not** recolor or modify the book's text.
 
 ## Status and document support
 
-- Only EPUB files opened with KOReader's reflowable reader are supported.
-  Other formats have no Typoscope menu or mask; assigned Typoscope actions do
-  nothing in those documents. Opening them preserves your EPUB mask preference.
+- EPUB, MOBI, FB2, HTML, TXT, RTF and other formats opened with KOReader's
+  reflowable reader (CRe) are supported when the reader provides its text-position
+  APIs. Support follows the reader's capabilities, not the filename extension.
+- PDF, DjVu and other documents opened with the fixed-layout reader have no
+  Typoscope menu or mask; assigned Typoscope actions do nothing in those
+  documents. Opening them preserves your mask preference.
 - Both page and scroll modes use KOReader's rendered text boxes to follow
   individual lines. In a two-page spread, the mask follows all lines on the left
   page before moving to the right page, keeping the other page covered.
@@ -29,7 +32,7 @@ Copy or clone this directory to KOReader's `plugins` directory, retaining the
 koreader/plugins/typoscope.koplugin/
 ```
 
-Restart KOReader. Open an EPUB, then select **Tools → Typoscope reading mask →
+Restart KOReader. Open a supported book, then select **Tools → Typoscope reading mask →
 Enable mask**.
 
 ## Controls
@@ -58,7 +61,7 @@ The plugin menu under **Tools → Typoscope reading mask** contains:
 - **Next line**: Advance the reading slit down one line.
 - **Previous line**: Move the reading slit up one line.
 - **Flash screen on line change**: Toggle regional e-ink cleaning flashes on line steps.
-- **Line padding**: Adjust vertical padding added around detected EPUB lines.
+- **Line padding**: Adjust vertical padding added around detected lines.
 - **Leave pages containing images unmasked**: Keep pages with image content uncovered.
 
 The plugin also registers the following actions with KOReader so they can be assigned in **Gesture

@@ -9,7 +9,7 @@ local function paint(plugin)
     return rects
 end
 
-describe("EPUB support", function()
+describe("reflowable document support", function()
     it("registers the Tools menu and view module for EPUBs", function()
         local plugin, state = newPlugin{file = "BOOK.EPUB", enabled = false}
         assert.is_true(plugin.is_doc_only)
@@ -25,9 +25,25 @@ describe("EPUB support", function()
         assert.is_false(state.settings.enabled)
     end)
 
-    it("stays inactive on other formats without erasing the EPUB preference", function()
-        for _, file in ipairs({"book.pdf", "book.djvu", "book.html", "book.fb2", "book.txt", "book.epub.zip"}) do
+    it("uses the same mask and navigation for other reflowable formats", function()
+        for _, file in ipairs({"book.mobi", "book.azw", "book.fb2", "book.html", "book.txt", "book.rtf", "book.fb2.zip", "book.custom"}) do
             local plugin, state = newPlugin{file = file}
+            assert.is_true(plugin.is_enabled)
+            assert.are.equal(plugin, state.modules.typoscope)
+            assert.is_not_nil(state.menu.typoscope)
+            assert.are.equal(2, #plugin.lines)
+            assert.are.equal(2, #paint(plugin))
+            assert.is_true(state.zones.typoscope_tap_forward.handler())
+            assert.are.equal(2, plugin.line_index)
+            assert.is_true(plugin:onTyposcopeNextLine())
+            assert.are.equal(3, state.page)
+            assert.are.equal(1, plugin.line_index)
+        end
+    end)
+
+    it("stays inactive on fixed-layout documents without erasing the mask preference", function()
+        for _, file in ipairs({"book.pdf", "book.djvu", "book.cbz"}) do
+            local plugin, state = newPlugin{file = file, paging = true}
             assert.is_false(plugin.is_enabled)
             assert.is_false(plugin:onTyposcopeToggle())
             assert.is_false(plugin:onTyposcopeNextLine())
@@ -52,6 +68,18 @@ describe("EPUB support", function()
         assert.is_false(plugin.is_enabled)
         assert.are.same({}, state.modules)
         plugin:onCloseDocument()
+    end)
+
+    it("requires the document APIs used by line tracking and navigation", function()
+        for _, method in ipairs({"getTextFromPositions", "getCurrentPage", "getCurrentPos", "getVisiblePageCount", "getPageCount"}) do
+            local plugin, state = newPlugin{file = "book.mobi", missing_document_method = method}
+            assert.is_false(plugin.is_enabled)
+            assert.is_false(plugin:onTyposcopeToggle())
+            assert.are.same({}, state.modules)
+            assert.are.same({}, state.zones)
+            assert.are.same({}, paint(plugin))
+            assert.is_true(state.settings.enabled)
+        end
     end)
 
     it("leaves blank and unextractable EPUB pages visible with normal navigation", function()
