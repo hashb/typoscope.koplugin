@@ -58,8 +58,6 @@ to avoid flashing UI refreshes also suppresses cleaning flashes.
 The plugin menu under **Tools → Typoscope reading mask** contains:
 
 - **Enable mask**: Toggle the reading mask on or off.
-- **Next line**: Advance the reading slit down one line.
-- **Previous line**: Move the reading slit up one line.
 - **Flash screen on line change**: Toggle regional e-ink cleaning flashes on line steps.
 - **Line padding**: Adjust vertical padding added around detected lines.
 - **Leave pages containing images unmasked**: Keep pages with image content uncovered.

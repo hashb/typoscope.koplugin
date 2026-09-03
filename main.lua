@@ -338,16 +338,6 @@ function Typoscope:addToMainMenu(menu_items)
                 callback = function() self:setEnabled(not self.is_enabled) end,
             },
             {
-                text = _("Next line"),
-                enabled_func = function() return self.is_enabled end,
-                callback = function() self:onTyposcopeNextLine() end,
-            },
-            {
-                text = _("Previous line"),
-                enabled_func = function() return self.is_enabled end,
-                callback = function() self:onTyposcopePreviousLine() end,
-            },
-            {
                 text = _("Flash screen on line change"),
                 checked_func = function() return self.flash_on_line_change end,
                 callback = function()
