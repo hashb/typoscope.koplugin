@@ -1,0 +1,91 @@
+/* Small layout adjustments over locally hosted Tufte CSS. */
+:root {
+  color-scheme: light;
+  --paper: #fffff8;
+  --ink: #1f201c;
+  --muted: #67685d;
+  --rule: #bebeb2;
+}
+
+html { scroll-padding-top: 2rem; }
+body {
+  box-sizing: border-box;
+  width: min(100% - 4rem, 960px);
+  max-width: none;
+  margin: 0 auto;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+article { padding: 3.5rem 0 2rem; }
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 1.5rem;
+}
+.masthead h1 { margin: 0; font-size: clamp(3.4rem, 7vw, 5.2rem); }
+.masthead .subtitle { width: auto; margin: 0; color: var(--muted); white-space: nowrap; }
+section { padding: 1.6rem 0; }
+.introduction { padding-bottom: 0; }
+.introduction > p { width: min(100%, 41rem); margin: 0 0 1.5rem; }
+nav { display: flex; flex-wrap: wrap; gap: 0.8rem 2rem; font-size: 1.25rem; }
+a:link, a:visited {
+  background: none;
+  color: inherit;
+  text-shadow: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.17em;
+}
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
+.demo-section { padding-top: 2.8rem; }
+.demo {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 255px);
+  column-gap: 3rem;
+  align-items: start;
+  max-width: none;
+  margin: 0;
+}
+.demo video { display: block; width: 100%; height: auto; aspect-ratio: 9 / 16; background: #181b1a; }
+.demo figcaption { float: none; clear: none; width: auto; max-width: none; margin: 0; padding-top: 0.7rem; }
+.demo figcaption p { width: auto; font-size: 1.22rem; line-height: 1.45; margin: 0 0 1.2rem; }
+.demo .figure-label { font-size: 1.45rem; font-style: italic; }
+.demo .video-meta { font-size: 1.08rem; color: var(--muted); }
+.transcript { margin-top: 1.4rem; font-size: 1.15rem; line-height: 1.45; }
+.transcript summary { cursor: pointer; text-decoration: underline; text-underline-offset: 0.17em; }
+.transcript[open] summary { margin-bottom: 1.2rem; }
+.demo .transcript p { font-size: 1.12rem; }
+.reading-section { width: min(100%, 43rem); }
+.reading-section h2 { margin-top: 0.7rem; }
+.reading-section > p, .reading-section > ol { width: auto; }
+.reading-section ol { box-sizing: border-box; padding-left: 1.5rem; }
+.reading-section li { padding-left: 0.35rem; margin-bottom: 0.85rem; }
+code { overflow-wrap: anywhere; font-size: 0.8em; }
+.reading-section .path { margin: 1.7rem 0; }
+.reading-section .small-note { font-size: 1.2rem; line-height: 1.5; color: var(--muted); }
+.site-footer { margin-top: 1.7rem; padding-top: 1.3rem; border-top: 1px solid var(--rule); color: var(--muted); }
+.site-footer p { width: auto; font-size: 1.1rem; line-height: 1.5; margin: 0 0 0.3rem; }
+.skip-link { position: absolute; left: 1rem; top: -5rem; padding: 0.6rem; background: var(--paper); z-index: 2; }
+.skip-link:focus { top: 0.5rem; }
+@media (max-width: 650px) {
+  body { width: calc(100% - 2.5rem); padding: 0; }
+  article { padding-top: 2.2rem; }
+  .masthead { flex-wrap: wrap; gap: 0.6rem 1rem; padding-bottom: 1.2rem; }
+  .masthead .subtitle { font-size: 1.5rem; }
+  .demo { grid-template-columns: minmax(0, 1fr); row-gap: 1.6rem; }
+  .demo video { width: min(100%, 360px); }
+  .demo figcaption { max-width: 30rem; padding-top: 0; }
+  .demo figcaption p { font-size: 1.25rem; }
+  section { padding-top: 1.4rem; padding-bottom: 1.4rem; }
+}
+@media print {
+  body { width: 100%; }
+  article { padding: 0; }
+  nav, .skip-link, video, .transcript { display: none; }
+  .demo { display: block; }
+}
