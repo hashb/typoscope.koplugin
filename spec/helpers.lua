@@ -24,12 +24,17 @@ function Helpers.newPlugin(options)
         flush = function() state.flushed = true end,
     }
     local stubs = {
-        ["ffi/blitbuffer"] = { COLOR_BLACK = 0, COLOR_WHITE = 255 },
+        ["ffi/blitbuffer"] = {
+            COLOR_BLACK = 0, COLOR_WHITE = 255,
+            Color8A = function(value, alpha) return { value = value, alpha = alpha } end,
+        },
         datastorage = { getSettingsDir = function() return "/tmp" end },
         dispatcher = { registerAction = function() end },
         luasettings = { open = function() return settings end },
         device = {
             isTouchDevice = function() return state.touch end,
+            hasKeys = function() return state.keys end,
+            input = { group = { Back = "Back" } },
             screen = {
                 getWidth = function() return state.width end,
                 getHeight = function() return state.height end,
@@ -37,7 +42,8 @@ function Helpers.newPlugin(options)
             },
         },
         ["ui/uimanager"] = {
-            show = function(_, widget) state.shown = widget end,
+            show = function(_, widget, _, _, x, y) state.shown, state.shown_at = widget, { x = x, y = y } end,
+            close = function(_, widget) state.closed = widget; widget:onCloseWidget() end,
             setDirty = function(_, widget, mode, region)
                 state.dirty[#state.dirty + 1] = { widget = widget, mode = mode, region = region }
             end,
@@ -45,23 +51,69 @@ function Helpers.newPlugin(options)
         ["ui/geometry"] = { new = function(_, region) return region end },
         ["ui/event"] = { new = function(_, name, direction) return { name = name, direction = direction } end },
         ["ui/widget/widget"] = { extend = function(_, definition) return definition end },
-        ["ui/widget/spinwidget"] = { new = function(_, definition) return definition end },
+        -- Slider panel widgets: record definitions and the calls the panel makes.
+        ["ui/widget/buttonprogresswidget"] = { new = function(_, definition)
+            function definition:setPosition(position, default) self.position, self.default_position = position, default end
+            function definition.getSize() return { w = 400, h = 40 } end
+            return definition
+        end },
+        ["ui/widget/button"] = { new = function(_, definition) return definition end },
+        ["ui/widget/horizontalgroup"] = { new = function(_, definition)
+            function definition:clear() for i = #self, 1, -1 do self[i] = nil end end
+            function definition.getSize() return { w = 400, h = 40 } end
+            return definition
+        end },
+        ["ui/widget/container/leftcontainer"] = { new = function(_, definition) return definition end },
+        ["ui/widget/focusmanager"] = { extend = function(_, class)
+            class.__index = class
+            function class:new(object)
+                object = setmetatable(object or {}, self)
+                object.key_events, object.ges_events = {}, {}
+                function object:mergeLayoutInVertical(child) self.layout[#self.layout + 1] = { child } end
+            function object.refocusWidget() end
+                object:init()
+                return object
+            end
+            return class
+        end },
+        ["ui/widget/container/framecontainer"] = { new = function(_, definition)
+            function definition.getSize() return { w = 570, h = 300 } end
+            return definition
+        end },
+        ["ui/widget/textwidget"] = { new = function(_, definition)
+            function definition:setText(text) self.text = text end
+            return definition
+        end },
+        ["ui/widget/verticalgroup"] = { new = function(_, definition) return definition end },
+        ["ui/widget/verticalspan"] = { new = function(_, definition) return definition end },
+        ["ui/gesturerange"] = { new = function(_, definition) return definition end },
+        ["ui/font"] = { getFace = function() return "face" end },
+        ["ui/size"] = {
+            padding = { default = 5, small = 2 }, margin = { default = 5, tiny = 1 }, radius = { window = 7 },
+            border = { window = 2 }, span = { vertical_large = 5, vertical_default = 2 },
+        },
         gettext = function(text) return text end,
     }
-    local environment = setmetatable({
+    local environment
+    local function loadWithStubs(path)
+        local chunk
+        if setfenv then
+            chunk = assert(loadfile(path))
+            setfenv(chunk, environment)
+        else
+            chunk = assert(loadfile(path, "t", environment))
+        end
+        return chunk
+    end
+    environment = setmetatable({
         -- Load only this plugin against stubs. Do not replace package.preload or
         -- package.loaded in the surrounding KOReader/Busted process.
         require = function(name) assert(stubs[name], name); return stubs[name] end,
         G_reader_settings = { nilOrFalse = function() return not state.disable_taps end },
+        -- The plugin loads its helper files with dofile; give them the same stubs.
+        dofile = function(path) return loadWithStubs(path)() end,
     }, { __index = _G })
-    local chunk
-    if setfenv then
-        chunk = assert(loadfile(plugin_dir .. "main.lua"))
-        setfenv(chunk, environment)
-    else
-        chunk = assert(loadfile(plugin_dir .. "main.lua", "t", environment))
-    end
-    local Typoscope = chunk()
+    local Typoscope = loadWithStubs(plugin_dir .. "main.lua")()
     local plugin
     local ui = {
         document = {

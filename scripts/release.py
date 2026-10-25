@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_FILES = ("main.lua", "geometry.lua", "_meta.lua", "LICENSE")
+RUNTIME_FILES = ("main.lua", "geometry.lua", "maskpanel.lua", "_meta.lua", "LICENSE")
 VERSION_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 META_VERSION = re.compile(r'''^[ \t]*version[ \t]*=[ \t]*(["'])([^"'\r\n]+)\1[ \t]*,?[ \t]*(?:--[^\r\n]*)?\r?$''', re.MULTILINE)
 

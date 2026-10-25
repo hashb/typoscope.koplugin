@@ -142,35 +142,24 @@ describe("mask color", function()
         return colors
     end
 
-    local function colorMenu(state)
-        for _, item in ipairs(state.menu.typoscope.sub_item_table) do
-            if item.text == "Mask color" then return item.sub_item_table end
-        end
-    end
-
     it("paints a dark mask by default", function()
-        local plugin, state = newPlugin()
+        local plugin = newPlugin()
         assert.are.equal("dark", plugin.mask_color)
         assert.are.same({ [0] = 2 }, paintColors(plugin))
-        local dark, light = colorMenu(state)[1], colorMenu(state)[2]
-        assert.is_true(dark.radio and light.radio)
-        assert.is_true(dark.checked_func())
-        assert.is_false(light.checked_func())
     end)
 
-    it("switches to a light mask from the menu, saves it, and flashes the screen", function()
+    it("switches to a light mask, saves it, and flashes the screen", function()
         local plugin, state = newPlugin()
-        colorMenu(state)[2].callback()
+        plugin:setMaskColor("light")
         assert.are.equal("light", plugin.mask_color)
         assert.are.equal("light", state.settings.mask_color)
         assert.are.same({ [255] = 2 }, paintColors(plugin))
         assert.are.same({{widget=plugin.view.dialog, mode="full"}}, state.dirty)
-        assert.is_true(colorMenu(state)[2].checked_func())
         -- Reselecting the current color changes nothing.
-        colorMenu(state)[2].callback()
+        plugin:setMaskColor("light")
         assert.are.equal(1, #state.dirty)
         plugin.flash_on_line_change = false
-        colorMenu(state)[1].callback()
+        plugin:setMaskColor("dark")
         assert.are.equal("dark", state.settings.mask_color)
         assert.are.same({widget=plugin.view.dialog, mode="partial"}, state.dirty[2])
     end)
@@ -189,38 +178,22 @@ describe("mask color", function()
 end)
 
 describe("mask mode", function()
-    local function modeMenu(state)
-        for _, item in ipairs(state.menu.typoscope.sub_item_table) do
-            if item.text == "Mask mode" then return item.sub_item_table end
-        end
-    end
-
-    it("defaults to both masks and exposes three mutually exclusive choices", function()
-        local plugin, state = newPlugin()
+    it("defaults to both masks", function()
+        local plugin = newPlugin()
         assert.are.equal("both", plugin.mask_mode)
         assert.are.same({{x=0,y=0,w=600,h=97}, {x=0,y=123,w=600,h=677}}, paint(plugin))
-        local menu = modeMenu(state)
-        assert.are.same({"Top only", "Bottom only", "Both"}, {menu[1].text, menu[2].text, menu[3].text})
-        for index, item in ipairs(menu) do
-            assert.is_true(item.radio)
-            assert.are.equal(index == 3, item.checked_func())
-        end
     end)
 
-    it("saves menu changes, preserves the line, and respects the flash preference", function()
+    it("saves changes, preserves the line, and respects the flash preference", function()
         local plugin, state = newPlugin()
         plugin.line_index = 2
-        local menu = modeMenu(state)
         for index, mode in ipairs({"top", "bottom", "both"}) do
-            menu[index].callback()
+            plugin:setMaskMode(mode)
             assert.are.equal(mode, plugin.mask_mode)
             assert.are.equal(mode, state.settings.mask_mode)
             assert.are.equal(2, plugin.line_index)
-            for other_index, item in ipairs(menu) do
-                assert.are.equal(index == other_index, item.checked_func())
-            end
             assert.are.same({widget=plugin.view.dialog,mode=index == 1 and "full" or "partial"}, state.dirty[index])
-            menu[index].callback() -- Reselecting the current mode changes nothing.
+            plugin:setMaskMode(mode) -- Reselecting the current mode changes nothing.
             assert.are.equal(index, #state.dirty)
             plugin.flash_on_line_change = false
         end
@@ -289,6 +262,273 @@ describe("mask mode", function()
             end
             assert.are.same({}, state.events)
         end
+    end)
+end)
+
+local function menuItem(state, text)
+    for _, item in ipairs(state.menu.typoscope.sub_item_table) do
+        if item.text == text then return item end
+    end
+end
+
+describe("mask opacity", function()
+    local function paintCalls(plugin, legacy)
+        local calls = {}
+        local bb = {
+            setPixelBlend = "blend",
+            paintRect = function(_, x, y, w, h, color, setter)
+                calls[#calls + 1] = { "paint", color, setter }
+            end,
+        }
+        if not legacy then
+            bb.darkenRect = function(_, x, y, w, h, by) calls[#calls + 1] = { "darken", by } end
+            bb.lightenRect = function(_, x, y, w, h, by) calls[#calls + 1] = { "lighten", by } end
+        end
+        plugin:paintTo(bb, 0, 0)
+        return calls
+    end
+
+    it("defaults to an opaque fill and restores clamped saved values", function()
+        local plugin = newPlugin()
+        assert.are.equal(100, plugin.mask_opacity)
+        assert.are.same({{"paint", 0}, {"paint", 0}}, paintCalls(plugin))
+        for saved, expected in pairs({ [40] = 40, [0] = 10, [250] = 100, bogus = 100 }) do
+            plugin.settings:saveSetting("mask_opacity", saved ~= "bogus" and saved or "50")
+            plugin:init()
+            assert.are.equal(expected, plugin.mask_opacity)
+        end
+    end)
+
+    it("saves the value, flashes the screen and blends in the mask color", function()
+        local plugin, state = newPlugin()
+        plugin:setMaskOpacity(60)
+        assert.are.equal(60, state.settings.mask_opacity)
+        assert.are.same({{widget=plugin.view.dialog, mode="full"}}, state.dirty)
+        assert.are.same({{"darken", 0.6}, {"darken", 0.6}}, paintCalls(plugin))
+        plugin:setMaskColor("light")
+        assert.are.same({{"lighten", 0.6}, {"lighten", 0.6}}, paintCalls(plugin))
+        plugin:setMaskOpacity(60) -- Unchanged values do not redraw.
+        assert.are.equal(2, #state.dirty)
+    end)
+
+    it("falls back to a per-pixel blend without the C blend helpers", function()
+        local plugin = newPlugin()
+        plugin:setMaskOpacity(50)
+        assert.are.same({"paint", {value=0, alpha=127}, "blend"}, paintCalls(plugin, true)[1])
+    end)
+end)
+
+describe("lines above and below", function()
+    local boxes = {
+        {x=20,y=100,w=400,h=20}, {x=20,y=125,w=400,h=20},
+        {x=20,y=150,w=400,h=20}, {x=20,y=175,w=400,h=20},
+    }
+
+    it("defaults to the reading line alone and restores clamped saved values", function()
+        local plugin = newPlugin()
+        assert.are.same({0, 0}, {plugin.lines_above, plugin.lines_below})
+        for saved, expected in pairs({ [2] = 2, [-1] = 0, [9] = 5, bogus = 0 }) do
+            plugin.settings:saveSetting("lines_above", saved ~= "bogus" and saved or "2")
+            plugin.settings:saveSetting("lines_below", saved ~= "bogus" and saved or "2")
+            plugin:init()
+            assert.are.same({expected, expected}, {plugin.lines_above, plugin.lines_below})
+        end
+    end)
+
+    it("saves each count and flashes unless a slider is previewing", function()
+        local plugin, state = newPlugin()
+        plugin:setContextLines("above", 2)
+        plugin:setContextLines("below", 3, true)
+        assert.are.same({2, 3}, {state.settings.lines_above, state.settings.lines_below})
+        assert.are.same({
+            {widget=plugin.view.dialog, mode="full"}, {widget=plugin.view.dialog, mode="partial"},
+        }, state.dirty)
+        plugin:setContextLines("above", 2) -- Unchanged values do not redraw.
+        assert.are.equal(2, #state.dirty)
+    end)
+
+    it("uncovers lines on both sides of the reading line, trimmed at page edges", function()
+        local plugin, state = newPlugin{boxes=boxes}
+        plugin:setContextLines("above", 1)
+        plugin:setContextLines("below", 1)
+        local function slot() return plugin:getSlot(plugin:getViewport()) end
+        assert.are.same({x=0,y=97,w=600,h=51}, slot()) -- No line above the first.
+        state.dirty = {}
+        plugin:onTyposcopeNextLine()
+        assert.are.same({x=0,y=97,w=600,h=76}, slot())
+        assert.are.same({{widget=plugin.view.dialog,mode="flashui",region={x=0,y=148,w=600,h=25}}}, state.dirty)
+        plugin:onTyposcopeNextLine()
+        assert.are.same({x=0,y=122,w=600,h=76}, slot())
+        plugin:onTyposcopeNextLine()
+        assert.are.same({x=0,y=147,w=600,h=51}, slot()) -- No line below the last.
+        assert.are.same({}, state.events)
+        plugin:onTyposcopeNextLine()
+        assert.are.same({3, 1}, {state.page, plugin.line_index})
+        plugin:onTyposcopePreviousLine()
+        assert.are.same({2, 4}, {state.page, plugin.line_index})
+    end)
+
+    it("can show context above the reading line only", function()
+        local plugin = newPlugin{boxes=boxes}
+        plugin:setContextLines("above", 2)
+        plugin.line_index = 3
+        assert.are.same({x=0,y=97,w=600,h=76}, plugin:getSlot(plugin:getViewport()))
+        assert.are.same({{x=0,y=0,w=600,h=97}, {x=0,y=173,w=600,h=627}}, paint(plugin))
+    end)
+
+    it("never spans both pages of a spread", function()
+        local plugin, state = newPlugin{visible_pages=2,boxes={
+            {x=20,y=100,w=240,h=20}, {x=320,y=100,w=240,h=20},
+            {x=20,y=125,w=240,h=20}, {x=320,y=125,w=240,h=20},
+            {x=20,y=150,w=240,h=20}, {x=320,y=150,w=240,h=20},
+        }}
+        plugin:setContextLines("above", 1)
+        plugin:setContextLines("below", 1)
+        plugin.line_index = 3
+        assert.are.same({x=0,y=122,w=300,h=51}, plugin:getSlot(plugin:getViewport()))
+        plugin:onTyposcopeNextLine()
+        assert.are.equal(4, plugin.line_index)
+        assert.are.same({x=300,y=97,w=300,h=51}, plugin:getSlot(plugin:getViewport()))
+        assert.are.same({}, state.events)
+    end)
+end)
+
+describe("mask settings panel", function()
+    local boxes = {
+        {x=20,y=100,w=400,h=20}, {x=20,y=125,w=400,h=20},
+        {x=20,y=150,w=400,h=20}, {x=20,y=600,w=400,h=20},
+    }
+    local function pos(inside)
+        return { intersectWith = function() return inside end }
+    end
+    local function selected(row)
+        local result = {}
+        for _, button in ipairs(row.buttons) do result[#result + 1] = button.preselect end
+        return result
+    end
+
+    it("replaces the mask submenus with one menu entry", function()
+        local _, state = newPlugin()
+        local texts = {}
+        for _, item in ipairs(state.menu.typoscope.sub_item_table) do texts[#texts + 1] = item.text end
+        assert.are.same({"Enable mask", "Flash screen on line change", "Mask settings",
+            "Leave pages containing images unmasked"}, texts)
+        menuItem(state, "Mask settings").callback()
+        assert.are.equal("typoscope_mask_panel", state.shown.name)
+    end)
+
+    it("opens with every row set to the current values", function()
+        local plugin, state = newPlugin()
+        plugin:setMaskOpacity(60)
+        plugin:setContextLines("above", 1)
+        plugin:showMaskPanel()
+        local color, mode, opacity, above, below, padding = unpack(state.shown.rows)
+        assert.are.same({"Color", true, false}, {color.text.text, unpack(selected(color))})
+        assert.are.same({"Mask", false, false, true}, {mode.text.text, unpack(selected(mode))})
+        assert.are.same({"Top", "Bottom", "Both"}, {mode.buttons[1].text, mode.buttons[2].text, mode.buttons[3].text})
+        assert.are.same({"Opacity (60%)", 10, 6, 10, true},
+            {opacity.text.text, opacity.progress.num_buttons, opacity.progress.position,
+             opacity.progress.default_position, opacity.progress.fine_tune})
+        -- Zero shows as an empty bar: the segments are 1 to 5.
+        assert.are.same({"Above (1)", 5, 1, 0},
+            {above.text.text, above.progress.num_buttons, above.progress.position, above.progress.default_position})
+        assert.are.same({"Below (0)", 0}, {below.text.text, below.progress.position})
+        assert.are.same({"Padding (3)", 10, 1, 1},
+            {padding.text.text, padding.progress.num_buttons, padding.progress.position, padding.progress.default_position})
+        assert.are.equal(6, #state.shown.layout)
+        assert.are.equal(color.buttons, state.shown.layout[1])
+    end)
+
+    it("previews choices live and redraws the selected option", function()
+        local plugin, state = newPlugin()
+        plugin:showMaskPanel()
+        local panel = state.shown
+        local color, mode = panel.rows[1], panel.rows[2]
+        state.dirty = {}
+        color.buttons[2].callback()
+        assert.are.equal("light", state.settings.mask_color)
+        assert.are.same({false, true}, selected(color))
+        assert.are.equal(color.buttons, panel.layout[1])
+        assert.are.equal(2, #color.group)
+        mode.buttons[1].callback()
+        assert.are.equal("top", plugin.mask_mode)
+        assert.are.same({true, false, false}, selected(mode))
+        for _, entry in ipairs(state.dirty) do assert.are_not.equal("full", entry.mode) end
+        assert.are.equal(panel, state.dirty[#state.dirty].widget)
+    end)
+
+    it("previews each slider step on the page without flashing, then flashes once on close", function()
+        local plugin, state = newPlugin{boxes=boxes}
+        plugin:showMaskPanel()
+        local panel = state.shown
+        local _, _, opacity, above, below, padding = unpack(panel.rows)
+        state.dirty = {}
+        opacity.progress.callback(4)
+        assert.are.equal(40, plugin.mask_opacity)
+        assert.are.equal(40, state.settings.mask_opacity)
+        assert.are.equal("Opacity (40%)", opacity.text.text)
+        assert.are.equal(4, opacity.progress.position)
+        assert.are.same({widget=plugin.view.dialog, mode="partial"}, state.dirty[1])
+        assert.are.equal(panel, state.dirty[2].widget)
+        below.progress.callback("+")
+        below.progress.callback(2)
+        above.progress.callback(1)
+        assert.are.same({1, 2}, {plugin.lines_above, plugin.lines_below})
+        assert.are.equal("Below (2)", below.text.text)
+        assert.are.same({x=0,y=97,w=600,h=76}, plugin:getSlot(plugin:getViewport()))
+        padding.progress.callback(4)
+        assert.are.equal(12, plugin.line_padding)
+        assert.are.equal(12, state.settings.line_padding)
+        assert.are.same({x=0,y=88,w=600,h=94}, plugin:getSlot(plugin:getViewport()))
+        for _, entry in ipairs(state.dirty) do assert.are_not.equal("full", entry.mode) end
+        panel.frame.dimen = {} -- Set when KOReader paints the panel.
+        panel:onTapClose(nil, { pos = pos(true) }) -- A tap inside the panel keeps it open.
+        assert.is_nil(state.closed)
+        state.dirty = {}
+        panel:onTapClose(nil, { pos = pos(false) })
+        assert.are.equal(panel, state.closed)
+        assert.are.same({{widget=plugin.view.dialog, mode="full"}}, state.dirty)
+    end)
+
+    it("clamps the fine-tune buttons at both ends", function()
+        local plugin, state = newPlugin()
+        plugin:showMaskPanel()
+        local _, _, opacity, _, below, padding = unpack(state.shown.rows)
+        opacity.progress.callback("+")
+        assert.are.equal(100, plugin.mask_opacity)
+        below.progress.callback("-")
+        assert.are.equal(0, plugin.lines_below)
+        assert.are.equal(0, below.progress.position)
+        opacity.progress.callback(1)
+        opacity.progress.callback("-")
+        assert.are.equal(10, plugin.mask_opacity)
+        below.progress.callback(5)
+        below.progress.callback("+")
+        assert.are.equal(5, plugin.lines_below)
+        padding.progress.callback("-")
+        padding.progress.callback("-")
+        assert.are.equal(0, plugin.line_padding)
+        padding.progress.callback(10)
+        padding.progress.callback("+")
+        assert.are.equal(30, plugin.line_padding)
+    end)
+
+    it("docks away from the reading line so the preview stays visible", function()
+        local plugin, state = newPlugin{boxes=boxes}
+        plugin:showMaskPanel()
+        assert.are.same({x=15, y=495}, state.shown_at) -- Line near the top: dock at the bottom.
+        plugin.line_index = 4
+        plugin:showMaskPanel()
+        assert.are.same({x=15, y=5}, state.shown_at)
+    end)
+
+    it("closes with the back key on devices with keys", function()
+        local plugin, state = newPlugin()
+        state.keys = true
+        plugin:showMaskPanel()
+        assert.are.same({{"Back"}}, state.shown.key_events.Close)
+        assert.is_true(state.shown:onClose())
+        assert.are.equal(state.shown, state.closed)
     end)
 end)
 
