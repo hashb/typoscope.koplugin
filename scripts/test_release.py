@@ -36,7 +36,7 @@ class ReleaseTests(unittest.TestCase):
         (self.repo / "scripts").mkdir()
         shutil.copyfile(SOURCE / "scripts/release.py", self.repo / "scripts/release.py")
         (self.repo / "_meta.lua").write_text('return {\n    version = "0.2.4",\n    fullname = "Typoscope",\n}\n')
-        for name in ("main.lua", "geometry.lua", "LICENSE"):
+        for name in ("main.lua", "geometry.lua", "maskpanel.lua", "LICENSE"):
             (self.repo / name).write_text("fixture " + name + "\n")
         (self.repo / ".gitignore").write_text("dist/\n")
         (self.repo / "docs").mkdir()
@@ -89,7 +89,7 @@ else:
     def assert_package(self, version):
         archive = self.repo / f"dist/v{version}/typoscope.koplugin-v{version}.zip"
         with zipfile.ZipFile(archive) as bundle:
-            self.assertEqual(set(bundle.namelist()), {"typoscope.koplugin/" + n for n in ("main.lua", "geometry.lua", "_meta.lua", "LICENSE")})
+            self.assertEqual(set(bundle.namelist()), {"typoscope.koplugin/" + n for n in ("main.lua", "geometry.lua", "maskpanel.lua", "_meta.lua", "LICENSE")})
             self.assertIn(f'version = "{version}"', bundle.read("typoscope.koplugin/_meta.lua").decode())
             self.assertIsNone(bundle.testzip())
         self.assertEqual(Path(str(archive) + ".sha256").read_text().split()[0], hashlib.sha256(archive.read_bytes()).hexdigest())
@@ -119,7 +119,7 @@ else:
         self.assertEqual(self.git("--git-dir=" + str(self.remote), "rev-parse", "refs/heads/main"), self.git("rev-parse", "HEAD"))
         self.assertEqual(self.git("--git-dir=" + str(self.remote), "rev-parse", "v1.0.0^{}"), self.git("rev-parse", "HEAD"))
         with zipfile.ZipFile(archive) as bundle:
-            for name in ("main.lua", "geometry.lua", "_meta.lua", "LICENSE"):
+            for name in ("main.lua", "geometry.lua", "maskpanel.lua", "_meta.lua", "LICENSE"):
                 self.assertEqual(bundle.read("typoscope.koplugin/" + name), (self.repo / name).read_bytes())
         upload = self.calls()[-1]
         self.assertEqual(upload[:3], ["release", "create", "v1.0.0"])

@@ -13,6 +13,7 @@ local _ = require("gettext")
 -- Resolve our helper relative to this file, including in extra plugin paths.
 local plugin_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 local Geometry = dofile(plugin_dir .. "geometry.lua")
+local MaskPanel -- loaded on first use; it needs KOReader's widget modules
 
 local function scaleBySize(size)
     if Screen and Screen.scaleBySize then
@@ -25,6 +26,15 @@ local function normalizeMaskMode(mode)
     return (mode == "top" or mode == "bottom") and mode or "both"
 end
 
+local function clampSetting(value, low, high, default)
+    if type(value) ~= "number" then return default end
+    return math.max(low, math.min(math.floor(value), high))
+end
+
+local MIN_OPACITY, MAX_OPACITY = 10, 100
+local MAX_CONTEXT_LINES = 5
+local MAX_LINE_PADDING = 30
+
 local Typoscope = Widget:extend{
     name = "typoscope",
     is_doc_only = true,
@@ -33,6 +43,9 @@ local Typoscope = Widget:extend{
     flash_on_line_change = true,
     mask_color = "dark",
     mask_mode = "both",
+    mask_opacity = 100,
+    lines_above = 0,
+    lines_below = 0,
     line_index = 1,
     line_padding = 3,
     lines = nil,
@@ -47,6 +60,9 @@ function Typoscope:init()
     self.flash_on_line_change = self.settings:nilOrTrue("flash_on_line_change")
     self.mask_color = self.settings:readSetting("mask_color") == "light" and "light" or "dark"
     self.mask_mode = normalizeMaskMode(self.settings:readSetting("mask_mode"))
+    self.mask_opacity = clampSetting(self.settings:readSetting("mask_opacity"), MIN_OPACITY, MAX_OPACITY, 100)
+    self.lines_above = clampSetting(self.settings:readSetting("lines_above"), 0, MAX_CONTEXT_LINES, 0)
+    self.lines_below = clampSetting(self.settings:readSetting("lines_below"), 0, MAX_CONTEXT_LINES, 0)
     self.line_padding = self.settings:readSetting("line_padding") or scaleBySize(self.line_padding)
     self:registerActions()
 end
@@ -188,9 +204,26 @@ function Typoscope:refreshLines(reset)
     self.line_index = math.max(1, math.min(self.line_index, #self.lines))
 end
 
+-- Extend from the reading line by up to count lines in direction (-1 above,
+-- 1 below), never continuing onto the other page of a spread.
+function Typoscope:getContextEdge(direction, count)
+    local area = self.lines[self.line_index].area
+    local edge = self.line_index
+    for _ = 1, count do
+        local line = self.lines[edge + direction]
+        if not line or line.area ~= area then break end
+        edge = edge + direction
+    end
+    return self.lines[edge]
+end
+
 function Typoscope:getSlot(viewport)
     local line = self.lines[self.line_index]
-    if line then return Geometry.slotForLine(line.area or viewport, line, self.line_padding, self.mask_mode) end
+    if not line then return end
+    local first = self:getContextEdge(-1, self.lines_above)
+    local last = self:getContextEdge(1, self.lines_below)
+    local span = { y = first.y, h = last.y + last.h - first.y }
+    return Geometry.slotForLine(line.area or viewport, span, self.line_padding, self.mask_mode)
 end
 
 function Typoscope:pageHasImages()
@@ -206,20 +239,98 @@ function Typoscope:getMaskColor()
     return Blitbuffer.COLOR_BLACK
 end
 
-function Typoscope:setMaskColor(color)
+-- With live set, the settings panel is previewing the change: skip the
+-- cleaning flash on every step. The panel flashes once when it closes.
+function Typoscope:setMaskColor(color, live)
     if color ~= "light" then color = "dark" end
     if color == self.mask_color then return end
     self.mask_color = color
     self.settings:saveSetting("mask_color", color)
-    self:redraw(true)
+    self:redraw(not live)
 end
 
-function Typoscope:setMaskMode(mode)
+function Typoscope:setMaskOpacity(opacity, live)
+    opacity = clampSetting(opacity, MIN_OPACITY, MAX_OPACITY, 100)
+    if opacity == self.mask_opacity then return end
+    self.mask_opacity = opacity
+    self.settings:saveSetting("mask_opacity", opacity)
+    self:redraw(not live)
+end
+
+-- direction is "above" or "below" the reading line.
+function Typoscope:setContextLines(direction, count, live)
+    local key = "lines_" .. direction
+    count = clampSetting(count, 0, MAX_CONTEXT_LINES, 0)
+    if count == self[key] then return end
+    self[key] = count
+    self.settings:saveSetting(key, count)
+    self:redraw(not live)
+end
+
+function Typoscope:showMaskPanel()
+    MaskPanel = MaskPanel or dofile(plugin_dir .. "maskpanel.lua")
+    MaskPanel:new{
+        typoscope = self,
+        rows = {
+            {
+                label = _("Color"),
+                options = { { text = _("Dark"), value = "dark" }, { text = _("Light"), value = "light" } },
+                value = function() return self.mask_color end,
+                apply = function(value) self:setMaskColor(value, true) end,
+            },
+            {
+                label = _("Mask"),
+                options = {
+                    { text = _("Top"), value = "top" },
+                    { text = _("Bottom"), value = "bottom" },
+                    { text = _("Both"), value = "both" },
+                },
+                value = function() return self.mask_mode end,
+                apply = function(value) self:setMaskMode(value, true) end,
+            },
+            {
+                label = _("Opacity"), min = MIN_OPACITY, max = MAX_OPACITY, step = 10, default = 100,
+                value = function() return self.mask_opacity end,
+                apply = function(value) self:setMaskOpacity(value, true) end,
+                format = function(value) return value .. "%" end,
+            },
+            {
+                label = _("Above"), min = 0, max = MAX_CONTEXT_LINES, step = 1, default = 0,
+                value = function() return self.lines_above end,
+                apply = function(value) self:setContextLines("above", value, true) end,
+                format = tostring,
+            },
+            {
+                label = _("Below"), min = 0, max = MAX_CONTEXT_LINES, step = 1, default = 0,
+                value = function() return self.lines_below end,
+                apply = function(value) self:setContextLines("below", value, true) end,
+                format = tostring,
+            },
+            {
+                label = _("Padding"), min = 0, max = MAX_LINE_PADDING, step = 3,
+                default = scaleBySize(Typoscope.line_padding),
+                value = function() return self.line_padding end,
+                apply = function(value) self:setLinePadding(value, true) end,
+                format = tostring,
+            },
+        },
+    }:show()
+end
+
+function Typoscope:setMaskMode(mode, live)
     mode = normalizeMaskMode(mode)
     if mode == self.mask_mode then return end
     self.mask_mode = mode
     self.settings:saveSetting("mask_mode", mode)
-    self:redraw(true)
+    self:redraw(not live)
+end
+
+function Typoscope:setLinePadding(padding, live)
+    padding = clampSetting(padding, 0, MAX_LINE_PADDING, self.line_padding)
+    if padding == self.line_padding then return end
+    self.line_padding = padding
+    self.settings:saveSetting("line_padding", padding)
+    self:redraw(not live)
 end
 
 function Typoscope:paintTo(bb, x, y)
@@ -228,12 +339,27 @@ function Typoscope:paintTo(bb, x, y)
     local viewport = self:getViewport()
     local slot = self:getSlot(viewport)
     if not slot then return end
-    local color = self:getMaskColor()
     for _, mask in ipairs(Geometry.masks(viewport, slot)) do
         if mask.w > 0 and mask.h > 0 then
-            bb:paintRect(x + mask.x, y + mask.y, mask.w, mask.h, color)
+            self:paintMask(bb, x + mask.x, y + mask.y, mask.w, mask.h)
         end
     end
+end
+
+function Typoscope:paintMask(bb, x, y, w, h)
+    if self.mask_opacity >= MAX_OPACITY then
+        return bb:paintRect(x, y, w, h, self:getMaskColor())
+    end
+    -- Blend over the page so covered text stays faintly readable. Current
+    -- KOReader blends in C via darkenRect/lightenRect; older builds named these
+    -- helpers differently, so fall back to the generic per-pixel blend there.
+    local by = self.mask_opacity / 100
+    if bb.darkenRect then
+        if self.mask_color == "light" then return bb:lightenRect(x, y, w, h, by) end
+        return bb:darkenRect(x, y, w, h, by)
+    end
+    local value = self.mask_color == "light" and 0xFF or 0
+    bb:paintRect(x, y, w, h, Blitbuffer.Color8A(value, math.floor(0xFF * by)), bb.setPixelBlend)
 end
 
 -- A whole-screen mask change (toggling it, or changing its color or mode) replaces
@@ -385,62 +511,8 @@ function Typoscope:addToMainMenu(menu_items)
                 end,
             },
             {
-                text = _("Mask color"),
-                sub_item_table = {
-                    {
-                        text = _("Dark"),
-                        radio = true,
-                        checked_func = function() return self.mask_color == "dark" end,
-                        callback = function() self:setMaskColor("dark") end,
-                    },
-                    {
-                        text = _("Light"),
-                        radio = true,
-                        checked_func = function() return self.mask_color == "light" end,
-                        callback = function() self:setMaskColor("light") end,
-                    },
-                },
-            },
-            {
-                text = _("Mask mode"),
-                sub_item_table = {
-                    {
-                        text = _("Top only"),
-                        radio = true,
-                        checked_func = function() return self.mask_mode == "top" end,
-                        callback = function() self:setMaskMode("top") end,
-                    },
-                    {
-                        text = _("Bottom only"),
-                        radio = true,
-                        checked_func = function() return self.mask_mode == "bottom" end,
-                        callback = function() self:setMaskMode("bottom") end,
-                    },
-                    {
-                        text = _("Both"),
-                        radio = true,
-                        checked_func = function() return self.mask_mode == "both" end,
-                        callback = function() self:setMaskMode("both") end,
-                    },
-                },
-            },
-            {
-                text = _("Line padding"),
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text = _("Line padding"),
-                        value = self.line_padding,
-                        value_min = 0,
-                        value_max = 30,
-                        value_step = 1,
-                        callback = function(spin)
-                            self.line_padding = spin.value
-                            self.settings:saveSetting("line_padding", self.line_padding)
-                            self:redraw()
-                        end,
-                    })
-                end,
+                text = _("Mask settings"),
+                callback = function() self:showMaskPanel() end,
             },
             {
                 text = _("Leave pages containing images unmasked"),
